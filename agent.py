@@ -7,6 +7,9 @@ Needs ANTHROPIC_API_KEY in .env (see .env.example).
 """
 
 import sys
+import time
+import datetime
+import email.utils as eut
 from pathlib import Path
 
 import anthropic
@@ -93,6 +96,61 @@ def main() -> None:
                 "\nError: invalid or missing ANTHROPIC_API_KEY — "
                 "copy .env.example to .env and set your key."
             )
+        except anthropic.BadRequestError as e:
+            # Provide a clear, human-friendly message when account credits are low
+            err_text = str(e).lower()
+            def _extract_retry_seconds(exc):
+                # Try to extract Retry-After or reset headers from the exception's response
+                for attr in ("response", "raw_response", "resp"):
+                    resp = getattr(exc, attr, None)
+                    if not resp:
+                        continue
+                    headers = getattr(resp, "headers", None)
+                    if not headers:
+                        continue
+                    # Common header keys
+                    for key in ("Retry-After", "retry-after"):
+                        if key in headers:
+                            val = headers[key]
+                            try:
+                                return int(val)
+                            except Exception:
+                                try:
+                                    dt = eut.parsedate_to_datetime(val)
+                                    secs = int((dt - datetime.datetime.now(datetime.timezone.utc)).total_seconds())
+                                    return max(0, secs)
+                                except Exception:
+                                    pass
+                    for key in ("x-rate-limit-reset", "x-ratelimit-reset", "x-reset"):
+                        if key in headers:
+                            try:
+                                reset = int(headers[key])
+                                # If milliseconds, convert to seconds
+                                if reset > 1e12:
+                                    reset = reset / 1000
+                                secs = int(reset - time.time())
+                                return max(0, secs)
+                            except Exception:
+                                pass
+                return None
+
+            if "credit balance" in err_text or "insufficient credits" in err_text or (
+                "credit" in err_text and "balance" in err_text
+            ):
+                secs = _extract_retry_seconds(e)
+                if secs is not None and secs > 0:
+                    m, s = divmod(secs, 60)
+                    time_msg = f" Try again in {m}m {s}s."
+                else:
+                    time_msg = ""
+                print("\nYou are out of Claude tokens (insufficient Anthropic credits)." + time_msg)
+                print(
+                    "Please top up your Anthropic account at: https://console.anthropic.com/account/billing/overview"
+                )
+            else:
+                print(f"\nAPI error: {e}")
+            history.pop()
+            continue
         except anthropic.APIConnectionError:
             print("\n[network error — try again]")
             history.pop()
