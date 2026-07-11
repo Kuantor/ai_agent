@@ -99,11 +99,16 @@ body {
 
 /* Main Container */
 .container {
+    /* Make the main area a column flex container so children can size
+       correctly and the chat can take the remaining space without
+       causing the page to scroll. */
+    display: flex;
+    flex-direction: column;
     flex: 1;
     max-width: 1200px;
     margin: 0 auto;
     width: 100%;
-    padding: 2rem;
+    padding: 1rem;
 }
 
 /* Footer */
@@ -119,7 +124,11 @@ body {
 .chat-container {
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 90px);
+    /* Let the chat container grow to fill the available space inside
+       the main `.container`. Use min-height:0 so child scroll areas
+       (like .chat-box) can compute correctly and not force page scroll. */
+    flex: 1;
+    min-height: 0;
     background: var(--bg-white);
     border-radius: 1rem;
     box-shadow: var(--shadow-lg);
