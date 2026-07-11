@@ -72,13 +72,20 @@
                 body: JSON.stringify({ question, history: chatHistory })
             });
 
-            const data = await response.json();
+            const rawText = await response.text();
+            let data;
+            try {
+                data = JSON.parse(rawText);
+            } catch {
+                data = { error: rawText || 'Unexpected server response' };
+            }
 
             if (!response.ok) {
-                addMessageToChat('error', data.error || 'An error occurred');
+                const message = data?.error || rawText || 'An error occurred';
+                addMessageToChat('error', message);
             } else {
-                addMessageToChat('assistant', data.response);
-                chatHistory = data.history;
+                addMessageToChat('assistant', data.response || 'No response returned.');
+                chatHistory = data.history || chatHistory;
                 
                 // Show sources
                 if (data.sources && data.sources.length > 0) {
