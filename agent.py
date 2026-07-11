@@ -157,8 +157,8 @@ def main() -> None:
             continue
 
         print("\n")
-        # Keep the full content (incl. thinking blocks) for correct multi-turn replay.
-        history.append({"role": "assistant", "content": response.content})
+        # Keep the assistant's text response in history for correct multi-turn replay.
+        history.append({"role": "assistant", "content": response_text})
 
 
 if __name__ == "__main__":

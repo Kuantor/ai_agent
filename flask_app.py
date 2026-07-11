@@ -131,10 +131,11 @@ def chat():
                 for c in chunks
             ]
 
+        assistant_content = response_text
         return jsonify({
-            "response": response_text,
+            "response": assistant_content,
             "sources": sources,
-            "history": history + [{"role": "assistant", "content": final_message.content}]
+            "history": history + [{"role": "assistant", "content": assistant_content}]
         })
 
     except anthropic.AuthenticationError:
@@ -201,6 +202,9 @@ def chat():
 
         # Fallback: return the raw error message for other bad requests
         return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        app.logger.exception("Unexpected error in /api/chat")
+        return jsonify({"error": "Internal server error. Please try again later."}), 500
 
 
 if __name__ == "__main__":
