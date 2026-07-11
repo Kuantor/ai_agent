@@ -20,6 +20,12 @@
             </ul>
         </div>
     </nav>
+    {% if request.path == '/' %}
+    <div class="chat-header">
+        <h1>Chat with Tynna</h1>
+        <p class="subtitle">Ask anything about English grammar, vocabulary, or learning strategies</p>
+    </div>
+    {% endif %}
 
     <main class="container">
         {% block content %}{% endblock %}
