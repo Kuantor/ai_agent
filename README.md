@@ -56,3 +56,38 @@ English-learning questions from the website. The `KnowledgeBase` and the
 prompt-building logic are plain importable modules, so the Flask app can
 call them directly; the knowledge base can later be extended with content
 generated from the flashcards database.
+
+## Error handling: token exhaustion
+
+When the Anthropic / Claude account associated with the agent runs out of
+tokens or credits, the API returns an error. To make this situation clearer
+to users, the agent now provides friendly, actionable messages both in the
+console and via the web UI:
+
+- Console (`agent.py`): prints a short message:
+  - "You are out of Claude tokens (insufficient Anthropic credits)."
+  - It also shows the billing URL where you can top up: `https://console.anthropic.com/account/billing/overview`.
+  - If the API response includes retry/reset headers (for example
+    `Retry-After` or `X-Rate-Limit-Reset`), a short "Try again in Xm Ys."
+    hint is appended to the console message.
+
+- Web API (`/api/chat` in `flask_app.py`): returns HTTP `402 Payment Required`
+  with JSON in the form:
+
+  ```json
+  {
+    "error": "You are out of Claude tokens (insufficient Anthropic credits). Please top up your account at: https://console.anthropic.com/account/billing/overview.",
+    "retry_in_seconds": 123 // optional, present only if the API provided reset info
+  }
+  ```
+
+  The `retry_in_seconds` field is optional and will be present only when
+  the Anthropic error response includes a retry or reset header that can be
+  parsed into a number of seconds.
+
+Notes:
+- The message wording is intentionally concise and user-facing; it avoids
+  exposing raw API internals while still directing users to the billing
+  console.
+- If you prefer different wording (e.g., removing the name "Claude" or
+  localizing the message), update `agent.py` and `flask_app.py` accordingly.

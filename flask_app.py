@@ -9,6 +9,9 @@ Needs ANTHROPIC_API_KEY in .env
 import json
 from pathlib import Path
 
+import time
+import datetime
+import email.utils as eut
 import anthropic
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify
@@ -143,13 +146,62 @@ def chat():
     except anthropic.APIConnectionError:
         return jsonify({"error": "Network error. Please try again."}), 503
     except anthropic.BadRequestError as e:
-        error_msg = str(e)
-        if "credit balance" in error_msg.lower():
-            return jsonify({
-                "error": "Anthropic account has insufficient credits. "
-                        "Please top up at https://console.anthropic.com/account/billing/overview"
-            }), 402
-        return jsonify({"error": error_msg}), 400
+        # Friendly message for insufficient credits / billing issues
+        err_text = str(e).lower()
+
+        def _extract_retry_seconds(exc):
+            for attr in ("response", "raw_response", "resp"):
+                resp = getattr(exc, attr, None)
+                if not resp:
+                    continue
+                headers = getattr(resp, "headers", None)
+                if not headers:
+                    continue
+                for key in ("Retry-After", "retry-after"):
+                    if key in headers:
+                        val = headers[key]
+                        try:
+                            return int(val)
+                        except Exception:
+                            try:
+                                dt = eut.parsedate_to_datetime(val)
+                                secs = int((dt - datetime.datetime.now(datetime.timezone.utc)).total_seconds())
+                                return max(0, secs)
+                            except Exception:
+                                pass
+                for key in ("x-rate-limit-reset", "x-ratelimit-reset", "x-reset"):
+                    if key in headers:
+                        try:
+                            reset = int(headers[key])
+                            if reset > 1e12:
+                                reset = reset / 1000
+                            secs = int(reset - time.time())
+                            return max(0, secs)
+                        except Exception:
+                            pass
+            return None
+
+        if "credit balance" in err_text or "insufficient credits" in err_text or (
+            "credit" in err_text and "balance" in err_text
+        ):
+            secs = _extract_retry_seconds(e)
+            if secs is not None and secs > 0:
+                m, s = divmod(secs, 60)
+                human = f" Try again in {m}m {s}s."
+            else:
+                human = ""
+            user_message = (
+                "You are out of Claude tokens (insufficient Anthropic credits)."
+                + human
+                + " Please top up your account at: https://console.anthropic.com/account/billing/overview."
+            )
+            result = {"error": user_message}
+            if secs is not None:
+                result["retry_in_seconds"] = secs
+            return jsonify(result), 402
+
+        # Fallback: return the raw error message for other bad requests
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         app.logger.exception("Unexpected error in /api/chat")
         return jsonify({"error": "Internal server error. Please try again later."}), 500
