@@ -91,3 +91,9 @@ Notes:
   console.
 - If you prefer different wording (e.g., removing the name "Claude" or
   localizing the message), update `agent.py` and `flask_app.py` accordingly.
+
+## UI: header integration (Issue #7)
+
+The chat header has been integrated into the main site header so the
+conversation begins directly beneath the unified header. See
+`templates/base.html` and `templates/index.html` for the layout changes.
