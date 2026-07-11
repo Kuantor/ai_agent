@@ -156,6 +156,8 @@ body {
     flex: 1;
     overflow-y: auto;
     padding: 2rem;
+    /* Ensure room for the fixed input at the bottom so messages aren't covered */
+    padding-bottom: 6rem;
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
@@ -274,9 +276,18 @@ body {
 
 /* Chat Input */
 .chat-input-area {
-    padding: 1.5rem 2rem;
+    padding: 0.75rem 1rem;
     background-color: var(--bg-light);
     border-top: 1px solid var(--border-color);
+    /* Keep the input visible at the bottom of the viewport */
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 0.5rem;
+    z-index: 1200;
+    width: min(1200px, calc(100% - 2rem));
+    border-radius: 0.75rem;
+    box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.08);
 }
 
 .chat-form {
