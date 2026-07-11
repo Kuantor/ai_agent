@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="chat-container">
+    <div class="chat-header">
+        <h1>Chat with Tynna</h1>
+        <p class="subtitle">Ask anything about English grammar, vocabulary, or learning strategies</p>
+    </div>
+
+    <div class="chat-box" id="chatBox">
+        <div class="chat-message welcome-message">
+            <div class="message-avatar">
+                <img src="{{ url_for('static', filename='img/tynna_avatar.jpg') }}" alt="Tynna">
+            </div>
+            <div class="message-content">
+                <p><strong>Tynna:</strong> Hi there! 👋 I'm Tynna, your English learning assistant. Ask me anything about grammar, vocabulary, phrasal verbs, or learning tips. I'm here to help you on your learning journey!</p>
+                <small class="message-time">Ready to help you learn.</small>
+            </div>
+        </div>
+    </div>
+
+    <div class="chat-sources" id="chatSources" style="display: none;">
+        <h4>📚 Retrieved knowledge:</h4>
+        <ul id="sourcesList"></ul>
+    </div>
+
+    <div class="chat-input-area">
+        <form id="chatForm" class="chat-form">
+            <input
+                type="text"
+                id="questionInput"
+                placeholder="Ask me anything about English..."
+                autocomplete="off"
+                required
+            >
+            <button type="submit" id="sendBtn" class="send-btn">Send</button>
+        </form>
+        <p class="hint">Press Enter or click Send to send your message</p>
+    </div>
+
+    <div class="loading-indicator" id="loadingIndicator" style="display: none;">
+        <span class="spinner"></span> Tynna is thinking...
+    </div>
+</div>
+
+<script>
+    let chatHistory = [];
+
+    const chatBox = document.getElementById('chatBox');
+    const chatForm = document.getElementById('chatForm');
+    const questionInput = document.getElementById('questionInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const loadingIndicator = document.getElementById('loadingIndicator');
+    const chatSources = document.getElementById('chatSources');
+    const sourcesList = document.getElementById('sourcesList');
+
+    chatForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const question = questionInput.value.trim();
+        if (!question) return;
+
+        // Add user message to chat
+        addMessageToChat('user', question);
+        questionInput.value = '';
+        sendBtn.disabled = true;
+        loadingIndicator.style.display = 'flex';
+
+        try {
+            const response = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question, history: chatHistory })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                addMessageToChat('error', data.error || 'An error occurred');
+            } else {
+                addMessageToChat('assistant', data.response);
+                chatHistory = data.history;
+                
+                // Show sources
+                if (data.sources && data.sources.length > 0) {
+                    sourcesList.innerHTML = '';
+                    data.sources.forEach(source => {
+                        const li = document.createElement('li');
+                        li.textContent = `${source.file} / ${source.heading} (score: ${source.score})`;
+                        sourcesList.appendChild(li);
+                    });
+                    chatSources.style.display = 'block';
+                } else {
+                    chatSources.style.display = 'none';
+                }
+            }
+        } catch (error) {
+            addMessageToChat('error', 'Network error: ' + error.message);
+        } finally {
+            sendBtn.disabled = false;
+            loadingIndicator.style.display = 'none';
+            questionInput.focus();
+        }
+    });
+
+    function addMessageToChat(role, text) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `chat-message ${role}-message`;
+
+        if (role === 'user') {
+            messageDiv.innerHTML = `
+                <div class="message-content">
+                    <p><strong>You:</strong> ${escapeHtml(text)}</p>
+                </div>
+            `;
+        } else if (role === 'error') {
+            messageDiv.innerHTML = `
+                <div class="message-content error">
+                    <p><strong>⚠️ Error:</strong> ${escapeHtml(text)}</p>
+                </div>
+            `;
+        } else {
+            messageDiv.innerHTML = `
+                <div class="message-avatar">
+                    <img src="{{ url_for('static', filename='img/tynna_avatar.jpg') }}" alt="Tynna">
+                </div>
+                <div class="message-content">
+                    <p><strong>Tynna:</strong></p>
+                    <p>${text}</p>
+                </div>
+            `;
+        }
+
+        chatBox.appendChild(messageDiv);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Focus input on load
+    window.addEventListener('load', () => questionInput.focus());
+</script>
+{% endblock %}
