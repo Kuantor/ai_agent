@@ -8,6 +8,11 @@ code is never duplicated.
 Run:  python flask_app.py     (needs ANTHROPIC_API_KEY in .env)
 """
 
+import re
+from datetime import datetime
+from pathlib import Path
+from uuid import uuid4
+
 import anthropic
 from flask import Flask, jsonify, render_template, request
 
@@ -22,6 +27,29 @@ app.json.sort_keys = False
 # or a pasted study passage stays well under this — while blocking oversized
 # payloads that could exhaust memory or run up Anthropic API costs.
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024
+
+LOG_DIR = Path(__file__).parent / "tynna_logs"
+LOG_DIR.mkdir(exist_ok=True)
+
+
+def _safe_chat_id(raw_chat_id: str | None) -> str:
+    """Return a filesystem-safe chat id."""
+    if not raw_chat_id:
+        return datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8]
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", raw_chat_id.strip())
+    return safe or (datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8])
+
+
+def _append_chat_log(chat_id: str, user_text: str, assistant_text: str) -> None:
+    """Append a single user-assistant exchange to a chat log file."""
+    log_path = LOG_DIR / f"chat_{chat_id}.txt"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}]\n")
+        f.write(f"User: {user_text}\n")
+        f.write("Tynna:\n")
+        f.write((assistant_text or "") + "\n")
+        f.write("\n" + ("-" * 80) + "\n\n")
 
 
 @app.errorhandler(413)
@@ -103,6 +131,7 @@ def chat():
     data = request.get_json(silent=True) or {}
     question = (data.get("question") or "").strip()
     history = data.get("history", [])
+    chat_id = _safe_chat_id(data.get("chat_id"))
     if not question:
         return jsonify({"error": "Empty question"}), 400
 
@@ -112,9 +141,13 @@ def chat():
             history = list(history or [])
             history.append({"role": "user", "content": question})
             history.append({"role": "assistant", "content": card_response})
-            return jsonify({"response": card_response, "sources": [], "history": history})
+            _append_chat_log(chat_id, question, card_response)
+            return jsonify({"response": card_response, "sources": [], "history": history, "chat_id": chat_id})
 
-        return jsonify(agent.answer(question, history))
+        result = agent.answer(question, history)
+        _append_chat_log(chat_id, question, result.get("response", ""))
+        result["chat_id"] = chat_id
+        return jsonify(result)
     except anthropic.APIError as e:
         body, status = api_error_response(e)
         return jsonify(body), status
