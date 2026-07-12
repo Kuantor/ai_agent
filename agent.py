@@ -78,6 +78,24 @@ Database Features:
 """
 
 
+def _personalized_system(user_name=None) -> str:
+    """SYSTEM_PROMPT, optionally personalized to address the visitor by name."""
+    if not user_name:
+        return SYSTEM_PROMPT
+    # Use only the first whitespace-delimited token, capped in length, so a
+    # display name can't smuggle extra prompt instructions into the system text.
+    tokens = str(user_name).split()
+    name = tokens[0][:40] if tokens else ""
+    if not name:
+        return SYSTEM_PROMPT
+    return (
+        SYSTEM_PROMPT
+        + f"\n\nThe person you are talking to is called {name}. Address them by "
+        "their first name naturally and warmly from time to time — not in every "
+        "message, and never robotically."
+    )
+
+
 def build_user_message(question: str, chunks) -> str:
     """Wrap the retrieved context and the question into one user message."""
     if not chunks:
@@ -106,13 +124,15 @@ class TynnaAgent:
     def chunk_count(self) -> int:
         return len(self.kb.chunks)
 
-    def answer(self, question: str, history=None, on_text=None) -> dict:
+    def answer(self, question: str, history=None, on_text=None, user_name=None) -> dict:
         """
         Answer a question with retrieval-augmented generation.
 
         `history` is the prior [{"role", "content"}] messages (may be None).
         `on_text`, if given, is called with each streamed text delta (used by
         the CLI to print tokens live).
+        `user_name`, if given, is the signed-in visitor's first name; Tynna is
+        then asked to address them by it naturally during the conversation.
 
         Returns {"response", "sources", "history"} where `history` includes the
         new user and assistant turns. Anthropic errors propagate to the caller
@@ -129,7 +149,7 @@ class TynnaAgent:
             model=MODEL,
             max_tokens=MAX_TOKENS,
             thinking={"type": "adaptive"},
-            system=SYSTEM_PROMPT,
+            system=_personalized_system(user_name),
             messages=history,
         ) as stream:
             for text in stream.text_stream:
