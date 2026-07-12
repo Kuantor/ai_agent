@@ -175,14 +175,30 @@ tynna> Of course! The database has 8 flashcards across several categories:
        What cards would you like to explore?
 ```
 
-    ## Dialog Logging (Issue #23)
+## Dialog Logging (Issue #23)
 
-    Every web chat dialog with Tynna is logged to the repository directory:
+Every web chat dialog with Tynna is logged to the repository directory:
 
-    - `tynna_logs/`
+- `tynna_logs/`
 
-    File naming format:
+File naming format:
 
-    - `chat_<chat_id>.txt`
+- `chat_<chat_id>.txt`
 
-    Each file contains timestamped user/assistant exchanges for that dialog.
+Each file contains timestamped user/assistant exchanges for that dialog.
+
+## Persona Tone (Issue #10)
+
+Tynna's conversational style was refined to feel warmer, more feminine, and
+more personable while staying appropriate for a learning assistant.
+
+Key adjustments:
+- More empathetic, supportive, and graceful phrasing.
+- Light playful charm to keep conversations engaging.
+- Strict professional boundaries: no explicit or inappropriate flirting.
+- Consistent tone across both console and browser chat views (shared
+  `SYSTEM_PROMPT` in `agent.py`).
+
+Rationale:
+- Improve approachability and user comfort.
+- Preserve clarity and educational value as the top priority.
