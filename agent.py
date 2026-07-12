@@ -34,6 +34,8 @@ MODEL = "claude-opus-4-8"
 MAX_TOKENS = 8192
 TOP_K = 3
 MAX_TOOL_ROUNDS = 5  # safety cap on tool-use iterations within one answer
+RECAP_MAX_CONTEXT_CHARS = 12000  # most recent past-log text fed into a recap
+RECAP_MAX_TOKENS = 1024
 
 # Matches kuantorflow's `flashcards` table (issue #20). The model fills the
 # fields itself — it is the lookup mechanism — and the card is saved through
@@ -246,6 +248,43 @@ class MykolaAgent:
             return json.dumps({"status": "saved", "card": entry}, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
+
+    def recap(self, past_conversations: str, user_name=None) -> str:
+        """
+        One-shot welcome-back recap for a returning learner (issue #30).
+
+        `past_conversations` is raw text of the user's previous chat logs
+        (the caller reads them from per-user log storage). Returns Mykola's
+        short recap of key points plus suggested follow-up topics, or ""
+        when there is nothing to recap. Anthropic errors propagate to the
+        caller, which should treat the recap as optional.
+        """
+        text = (past_conversations or "").strip()
+        if not text:
+            return ""
+        # Keep the most recent material when logs exceed the budget.
+        text = text[-RECAP_MAX_CONTEXT_CHARS:]
+
+        prompt = (
+            "<past_conversations>\n" + text + "\n</past_conversations>\n\n"
+            "The learner above has just returned for a new session. In your own "
+            "voice, briefly recap the key points of their previous conversations "
+            "— topics discussed, words they learned or saved, questions they "
+            "asked (3-5 sentences at most). Then suggest two or three specific "
+            "follow-up questions or topics to continue with, as a short list. "
+            "Only mention things actually present in the logs — never invent. "
+            "Address the learner directly, and do not mention the logs "
+            "themselves or that conversations are recorded unless asked."
+        )
+        message = self.client.messages.create(
+            model=MODEL,
+            max_tokens=RECAP_MAX_TOKENS,
+            system=_personalized_system(user_name),
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return "".join(
+            block.text for block in message.content if block.type == "text"
+        ).strip()
 
     def answer(self, question: str, history=None, on_text=None, user_name=None) -> dict:
         """
