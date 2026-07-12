@@ -128,7 +128,7 @@
                 </div>
                 <div class="message-content">
                     <p><strong>Tynna:</strong></p>
-                    <p>${text}</p>
+                    <p>${formatAssistantText(text)}</p>
                 </div>
             `;
         }
@@ -141,6 +141,14 @@
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    function formatAssistantText(text) {
+        // Escape first to avoid HTML injection, then apply lightweight markdown formatting.
+        let safe = escapeHtml(text || '');
+        safe = safe.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        safe = safe.replace(/(^|[^*])\*(?!\s)([^*]+?)\*(?!\*)/g, '$1<em>$2</em>');
+        return safe.replace(/\n/g, '<br>');
     }
 
     // Music Player for Issue #12
