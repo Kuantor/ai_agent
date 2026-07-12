@@ -174,3 +174,15 @@ tynna> Of course! The database has 8 flashcards across several categories:
        
        What cards would you like to explore?
 ```
+
+    ## Dialog Logging (Issue #23)
+
+    Every web chat dialog with Tynna is logged to the repository directory:
+
+    - `tynna_logs/`
+
+    File naming format:
+
+    - `chat_<chat_id>.txt`
+
+    Each file contains timestamped user/assistant exchanges for that dialog.

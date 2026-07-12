@@ -11,3 +11,6 @@ venv/
 .vscode/
 .idea/
 .spyproject/
+
+# Runtime dialog logs (keep directory via .gitkeep)
+tynna_logs/chat_*.txt
