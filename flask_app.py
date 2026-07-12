@@ -13,6 +13,7 @@ from flask import Flask, jsonify, render_template, request
 
 from agent import TynnaAgent, api_error_response
 from word_list import WordListGenerator
+from cards_db import FlashcardsDB
 
 app = Flask(__name__)
 app.config["JSON_SORT_KEYS"] = False
@@ -20,6 +21,7 @@ app.config["JSON_SORT_KEYS"] = False
 # Load the knowledge base and Anthropic client once, reuse across requests.
 agent = TynnaAgent()
 word_list_gen = WordListGenerator(agent.kb.chunks)
+cards_db = FlashcardsDB()
 
 
 @app.route("/")
@@ -85,6 +87,78 @@ def get_gap_exercise():
         return jsonify({"error": "Failed to generate gap exercise"}), 500
 
 
+@app.route("/api/cards", methods=["GET"])
+def get_all_cards():
+    """Retrieve all flashcards from the database."""
+    try:
+        cards = cards_db.get_all_cards()
+        return jsonify({
+            "cards": cards,
+            "count": cards_db.get_cards_count(),
+            "categories": cards_db.get_categories()
+        })
+    except Exception as e:
+        app.logger.exception("Error retrieving cards")
+        return jsonify({"error": "Failed to retrieve cards"}), 500
+
+
+@app.route("/api/cards/category/<category>", methods=["GET"])
+def get_cards_by_category(category):
+    """Retrieve flashcards by category."""
+    try:
+        cards = cards_db.get_cards_by_category(category)
+        return jsonify({
+            "cards": cards,
+            "count": len(cards),
+            "category": category
+        })
+    except Exception as e:
+        app.logger.exception("Error retrieving cards by category")
+        return jsonify({"error": "Failed to retrieve cards"}), 500
+
+
+@app.route("/api/cards/search", methods=["GET"])
+def search_cards():
+    """Search flashcards by word or translation."""
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"error": "Missing search query"}), 400
+    
+    try:
+        cards = cards_db.search_cards(query)
+        return jsonify({
+            "cards": cards,
+            "count": len(cards),
+            "query": query
+        })
+    except Exception as e:
+        app.logger.exception("Error searching cards")
+        return jsonify({"error": "Failed to search cards"}), 500
+
+
+@app.route("/api/cards/add", methods=["POST"])
+def add_card():
+    """Add a new flashcard to the database."""
+    data = request.get_json(silent=True) or {}
+    word = (data.get("word") or "").strip()
+    translation = (data.get("translation") or "").strip()
+    explanation = (data.get("explanation") or "").strip()
+    category = (data.get("category") or "general").strip()
+    
+    if not word or not translation:
+        return jsonify({"error": "word and translation are required"}), 400
+    
+    try:
+        card = cards_db.add_card(word, translation, explanation, category)
+        return jsonify({
+            "card": card,
+            "message": "Card added successfully"
+        }), 201
+    except Exception as e:
+        app.logger.exception("Error adding card")
+        return jsonify({"error": "Failed to add card"}), 500
+
+
 if __name__ == "__main__":
-    print(f"Tynna is starting... ({agent.chunk_count} knowledge chunks loaded)")
+    print(f"Tynna is starting... ({agent.chunk_count} knowledge chunks loaded, {cards_db.get_cards_count()} flashcards in database)")
     app.run(debug=True, port=5000)
