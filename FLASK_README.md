@@ -1,6 +1,6 @@
-# Tynna Flask Web App
+# Mykola Flask Web App
 
-Welcome to **Tynna**, the web-based English learning assistant with a personal touch!
+Welcome to **Mykola**, the web-based English learning assistant with a personal touch!
 
 ## Quick Start
 
@@ -32,17 +32,17 @@ The app will start at: **http://localhost:5000**
 ## Features
 
 ### 💬 Chat Page (`/`)
-- Interactive chat with Tynna
+- Interactive chat with Mykola
 - Ask questions about English grammar, vocabulary, and learning strategies
 - Retrieves relevant knowledge from the local knowledge base
 - Streams responses from Claude
 - Shows which knowledge sources were used for your answer
 
 ### 🎨 About Page (`/about`)
-- Meet Tynna and learn her story
+- Meet Mykola and learn his story
 - Gallery with clickable images (click to see full-size poster)
-- Watch Tynna dance in the embedded video
-- Browse key features and what Tynna offers
+- Watch Mykola dance in the embedded video
+- Browse key features and what Mykola offers
 
 ## File Structure
 
@@ -55,11 +55,11 @@ The app will start at: **http://localhost:5000**
 │   └── about.html           # About/gallery page
 ├── static/
 │   ├── style.css            # Global styling
-│   └── img/                 # Tynna's media files
-│       ├── tynna_avatar.jpg
-│       ├── tynna.jpg
-│       ├── tynna_poster.jpg
-│       └── tynna_jive.mp4
+│   └── img/                 # Mykola's media files
+│       ├── mykola_avatar.jpg
+│       ├── mykola_poster.jpg
+│       ├── mykola_poster.jpg
+│       └── mykola_choir.mp4
 └── knowledge/               # Knowledge base markdown files
 ```
 
@@ -80,10 +80,10 @@ app.run(debug=True, port=8000)  # Use 8000 instead
 
 ### Images/videos not loading
 Ensure all files exist in `static/img/`:
-- `tynna_avatar.jpg`
-- `tynna.jpg`
-- `tynna_poster.jpg`
-- `tynna_jive.mp4`
+- `mykola_avatar.jpg`
+- `mykola_poster.jpg`
+- `mykola_poster.jpg`
+- `mykola_choir.mp4`
 
 ## Tech Stack
 
@@ -95,4 +95,4 @@ Ensure all files exist in `static/img/`:
 
 ---
 
-Enjoy chatting with Tynna! 🚀
+Enjoy chatting with Mykola! 🚀

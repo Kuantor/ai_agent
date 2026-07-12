@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Tynna - English Learning Assistant{% endblock %}</title>
+    <title>{% block title %}Mykola - English Learning Assistant{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     {% block extra_css %}{% endblock %}
 </head>
@@ -11,8 +11,8 @@
     <nav class="navbar">
         <div class="nav-container">
             <div class="nav-brand">
-                <img src="{{ url_for('static', filename='img/tynna_avatar.jpg') }}" alt="Tynna Avatar" class="nav-avatar">
-                <span class="nav-title">Tynna</span>
+                <img src="{{ url_for('static', filename='img/mykola_avatar.jpg') }}" alt="Mykola Avatar" class="nav-avatar">
+                <span class="nav-title">Mykola</span>
             </div>
             <ul class="nav-links">
                 <li><a href="{{ url_for('home') }}" class="nav-link {% if request.path == '/' %}active{% endif %}">Chat</a></li>
@@ -24,7 +24,7 @@
     <div class="chat-header">
         <div class="chat-header-content">
             <div>
-                <h1>Chat with Tynna</h1>
+                <h1>Chat with Mykola</h1>
                 <p class="subtitle">Ask anything about English grammar, vocabulary, or learning strategies</p>
             </div>
             <button id="musicBtn" class="music-btn" title="Play music">🎵 Play</button>
@@ -37,7 +37,7 @@
     </main>
 
     <footer class="footer">
-        <p>&copy; 2026 Tynna English Learning Assistant. Powered by KuantorFlow.</p>
+        <p>&copy; 2026 Mykola English Learning Assistant. Powered by KuantorFlow.</p>
     </footer>
 
     {% block extra_js %}{% endblock %}

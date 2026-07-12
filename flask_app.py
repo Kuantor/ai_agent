@@ -1,8 +1,8 @@
 """
-Standalone Flask web app for Tynna, the AI study assistant.
+Standalone Flask web app for Mykola, the AI study assistant.
 
-The chatbot logic lives in agent.py (`TynnaAgent`); this file is only the web
-front-end. The KuantorFlow project imports the same `TynnaAgent`, so the agent
+The chatbot logic lives in agent.py (`MykolaAgent`); this file is only the web
+front-end. The KuantorFlow project imports the same `MykolaAgent`, so the agent
 code is never duplicated.
 
 Run:  python flask_app.py     (needs ANTHROPIC_API_KEY in .env)
@@ -16,7 +16,7 @@ from uuid import uuid4
 import anthropic
 from flask import Flask, jsonify, render_template, request, url_for
 
-from agent import TynnaAgent, api_error_response
+from agent import MykolaAgent, api_error_response
 from word_list import WordListGenerator
 from cards_db import FlashcardsDB, format_card_list_for_chat
 
@@ -30,14 +30,14 @@ app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024
 
 
 @app.context_processor
-def inject_tynna_media():
-    """Resolve Tynna asset names to this app's own static URLs. The shared
-    _tynna_about.html partial calls tynna_media(); kuantorflow provides its
+def inject_mykola_media():
+    """Resolve Mykola asset names to this app's own static URLs. The shared
+    _mykola_about.html partial calls mykola_media(); kuantorflow provides its
     own version so the same markup works when the partial is reused there."""
-    return {"tynna_media": lambda f: url_for("static", filename="img/" + f)}
+    return {"mykola_media": lambda f: url_for("static", filename="img/" + f)}
 
 
-LOG_DIR = Path(__file__).parent / "tynna_logs"
+LOG_DIR = Path(__file__).parent / "mykola_logs"
 LOG_DIR.mkdir(exist_ok=True)
 
 
@@ -56,7 +56,7 @@ def _append_chat_log(chat_id: str, user_text: str, assistant_text: str) -> None:
     with log_path.open("a", encoding="utf-8") as f:
         f.write(f"[{timestamp}]\n")
         f.write(f"User: {user_text}\n")
-        f.write("Tynna:\n")
+        f.write("Mykola:\n")
         f.write((assistant_text or "") + "\n")
         f.write("\n" + ("-" * 80) + "\n\n")
 
@@ -68,7 +68,7 @@ def request_too_large(e):
 
 
 # Load the knowledge base and Anthropic client once, reuse across requests.
-agent = TynnaAgent()
+agent = MykolaAgent()
 word_list_gen = WordListGenerator(agent.kb.chunks)
 cards_db = FlashcardsDB()
 
@@ -130,13 +130,13 @@ def home():
 
 @app.route("/about")
 def about():
-    """Render Tynna's profile and gallery page."""
+    """Render Mykola's profile and gallery page."""
     return render_template("about.html")
 
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
-    """Answer a question via the shared TynnaAgent. Returns response + sources."""
+    """Answer a question via the shared MykolaAgent. Returns response + sources."""
     data = request.get_json(silent=True) or {}
     question = (data.get("question") or "").strip()
     history = data.get("history", [])
@@ -270,5 +270,5 @@ def add_card():
 
 
 if __name__ == "__main__":
-    print(f"Tynna is starting... ({agent.chunk_count} knowledge chunks loaded, {cards_db.get_cards_count()} flashcards in database)")
+    print(f"Mykola is starting... ({agent.chunk_count} knowledge chunks loaded, {cards_db.get_cards_count()} flashcards in database)")
     app.run(debug=True, port=5000)
