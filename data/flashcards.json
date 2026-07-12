@@ -1,0 +1,58 @@
+[
+  {
+    "id": 1,
+    "word": "phrasal verb",
+    "translation": "фразовий дієслово",
+    "explanation": "A verb combined with a preposition or adverb that has a different meaning from the individual words",
+    "category": "grammar"
+  },
+  {
+    "id": 2,
+    "word": "present perfect",
+    "translation": "Present Perfect (теперішній дослідний час)",
+    "explanation": "A tense used to describe actions that started in the past and continue to the present",
+    "category": "grammar"
+  },
+  {
+    "id": 3,
+    "word": "irregular verb",
+    "translation": "неправильне дієслово",
+    "explanation": "A verb that does not follow the standard pattern of adding -ed for past tense",
+    "category": "grammar"
+  },
+  {
+    "id": 4,
+    "word": "travel",
+    "translation": "подорож, подорожувати",
+    "explanation": "The act of going from one place to another, often over a long distance",
+    "category": "vocabulary"
+  },
+  {
+    "id": 5,
+    "word": "itinerary",
+    "translation": "маршрут, план подорожі",
+    "explanation": "A planned route or sequence of travel",
+    "category": "travel"
+  },
+  {
+    "id": 6,
+    "word": "accommodation",
+    "translation": "житло, розміщення",
+    "explanation": "A place where someone can live or stay temporarily",
+    "category": "travel"
+  },
+  {
+    "id": 7,
+    "word": "dialect",
+    "translation": "діалект",
+    "explanation": "A particular form of a language that is spoken in a specific region",
+    "category": "linguistics"
+  },
+  {
+    "id": 8,
+    "word": "eloquent",
+    "translation": "красномовний",
+    "explanation": "Fluent or persuasive in speaking or writing",
+    "category": "vocabulary"
+  }
+]

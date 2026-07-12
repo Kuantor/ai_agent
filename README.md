@@ -97,3 +97,64 @@ Notes:
 The chat header has been integrated into the main site header so the
 conversation begins directly beneath the unified header. See
 `templates/base.html` and `templates/index.html` for the layout changes.
+
+## Word Lists and Gap Exercises (Issue #11)
+
+Tynna can now generate vocabulary word lists and fill-the-gaps exercises from
+the knowledge base. These features help users practice and reinforce their
+English learning.
+
+### Features:
+
+- **Word List Generator** (`word_list.py`): Extracts key terms and phrases from
+  the knowledge base, with definitions and sources.
+- **Gap Exercises**: Creates fill-the-gaps exercises from knowledge base content
+  where users must guess missing words.
+- **API Endpoints**:
+  - `POST /api/word-list` — generates a vocabulary list
+  - `GET /api/gap-exercise` — generates a fill-the-gaps exercise
+
+### Usage:
+
+Users can ask Tynna for vocabulary lists or practice exercises, and the agent
+will recognize these requests and suggest using the word list or gap exercise
+features. The system prompt includes guidance for handling such requests.
+
+Example:
+```
+user> I want a vocabulary list
+tynna> I can generate a vocabulary list from the learning database! 
+       Check the word list feature in the app.
+```
+
+### Flashcards Database:
+
+Tynna can now retrieve and manage flashcards from a database (`cards_db.py`).
+The database stores words/expressions with translations and explanations.
+
+**Features:**
+- `GET /api/cards` — retrieve all flashcards
+- `GET /api/cards/category/<category>` — get cards from a specific category (e.g., "grammar", "vocabulary", "travel")
+- `GET /api/cards/search?q=<query>` — search cards by word or translation
+- `POST /api/cards/add` — add a new flashcard (requires: word, translation; optional: explanation, category)
+
+**Tynna's Capabilities:**
+When a user asks for "a list of all the cards in the database" or similar, Tynna now knows:
+- She can retrieve the full card list and explain how to browse by category
+- She can help search for specific words
+- She can guide users to add new cards to the database
+- She recognizes requests like "cards about travel" and can suggest filtering by category
+
+Example with new database:
+```
+user> Can you give me a list of all the cards in the database?
+tynna> Of course! The database has 8 flashcards across several categories: 
+       grammar, linguistics, travel, and vocabulary. 
+       
+       You can:
+       - View all cards
+       - Browse by category (travel, grammar, vocabulary, etc.)
+       - Search for specific words
+       
+       What cards would you like to explore?
+```
