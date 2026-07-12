@@ -1,4 +1,4 @@
-"""Flashcards data access for Tynna.
+"""Flashcards data access for Mykola.
 
 Supported sources (in priority order):
 - MySQL table (for KuantorFlow integration)

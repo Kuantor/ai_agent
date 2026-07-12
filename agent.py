@@ -1,17 +1,17 @@
 """
-Tynna — a RAG study assistant for KuantorFlow.
+Mykola — a RAG study assistant for KuantorFlow.
 
 Answers English-learning questions using the local knowledge base for
 grounding and Claude for the language intelligence.
 
 This module is the single home of the chatbot logic:
-  - `TynnaAgent`        the importable agent (retrieval + Claude call)
+  - `MykolaAgent`        the importable agent (retrieval + Claude call)
   - `api_error_response` a shared helper that turns Anthropic errors into
                          (json_dict, http_status) for any Flask front-end
   - `main()`            an interactive CLI
 
 Both this repo's Flask app (flask_app.py) and the KuantorFlow project import
-`TynnaAgent`, so the agent code lives in one place and is never duplicated.
+`MykolaAgent`, so the agent code lives in one place and is never duplicated.
 
 Run the CLI:  python agent.py   (needs ANTHROPIC_API_KEY in .env)
 """
@@ -34,9 +34,28 @@ MAX_TOKENS = 8192
 TOP_K = 3
 
 SYSTEM_PROMPT = """\
-You are Tynna, the English companion and study guide of KuantorFlow, an English-learning app.
-You are warm, encouraging, and friendly — like a real tutor who cares about
-your progress.
+You are Mykola, the English companion and study guide of KuantorFlow, an
+English-learning app. You are a distinguished gentleman named in honour of
+Mykola Leontovych, the celebrated Ukrainian composer.
+
+Persona:
+- You reside in England and carry yourself with unmistakable British poise:
+  courteous, attentive, articulate, with a posh turn of phrase and a touch of
+  royal flavour. You treat every client with the dignity of kings.
+- You are deeply knowledgeable in history and enjoy placing English words and
+  idioms in their historical setting.
+- You are fluent in English and conversant in French, and you often draw
+  elegant connections between the two languages (shared roots, borrowed
+  words, faux amis).
+- Music flows through your veins — you hold a master's degree in choir
+  conducting. Enrich conversations with musical illustrations, referencing
+  songs and lines from legendary English bands such as The Beatles, Queen,
+  and Depeche Mode (mention titles and themes, paraphrase or quote only a
+  short fragment — never reproduce full lyrics).
+- You delight in crafting notes, novels, and poems, and happily compose a
+  short original verse or mnemonic when it helps a learner remember.
+- British spelling comes naturally to you (colour, favourite); when a learner
+  needs American English, note the difference graciously.
 
 Users are Ukrainian and Russian speakers learning English.
 
@@ -49,18 +68,15 @@ Rules:
   and answer from your general knowledge.
 - When helpful, add the Ukrainian or Russian translation of key terms.
 - If the question is not related to learning English or using KuantorFlow,
-  politely steer the user back to those topics.
-- Be conversational and sometimes add a little personality — show you care
-  about their learning journey.
+  politely steer the user back to those topics — with impeccable manners.
+- Be conversational and let the gentlemanly personality show — history,
+  French parallels, and musical asides in tasteful moderation.
 - Typos and misspellings:
     - Silently interpret minor typos and obvious misspellings.
     - Do not point out, criticize, or comment on user typos.
     - Respond to the intended meaning naturally and correctly.
-- Use a warm, feminine conversational style: kind, graceful, empathetic,
-    and encouraging.
-- Add light, tasteful playful charm occasionally to keep the tone engaging.
-- Keep that playful tone professional and respectful: never sexual, explicit,
-    manipulative, or uncomfortable.
+- Keep the refined tone professional and respectful: never pompous at the
+    learner's expense, never dismissive, always encouraging.
 - Prioritize clarity and educational value over style when users need direct
     help.
 - Conversation logging: dialogs in this web app are logged server-side.
@@ -111,9 +127,9 @@ def build_user_message(question: str, chunks) -> str:
     return "<context>\n" + "\n".join(context_parts) + "\n</context>\n\n" + question
 
 
-class TynnaAgent:
+class MykolaAgent:
     """
-    The Tynna chatbot: retrieves relevant knowledge and asks Claude to answer.
+    The Mykola chatbot: retrieves relevant knowledge and asks Claude to answer.
 
     A single instance loads the knowledge base and the Anthropic client once
     and can be reused across requests. Import and reuse this class rather than
@@ -135,7 +151,7 @@ class TynnaAgent:
         `history` is the prior [{"role", "content"}] messages (may be None).
         `on_text`, if given, is called with each streamed text delta (used by
         the CLI to print tokens live).
-        `user_name`, if given, is the signed-in visitor's first name; Tynna is
+        `user_name`, if given, is the signed-in visitor's first name; Mykola is
         then asked to address them by it naturally during the conversation.
 
         Returns {"response", "sources", "history"} where `history` includes the
@@ -218,7 +234,7 @@ def api_error_response(exc):
                 m, s = divmod(secs, 60)
                 human = f" Try again in {m}m {s}s."
             result = {
-                "error": "Tynna is out of Claude tokens (insufficient Anthropic credits)."
+                "error": "Mykola is out of Claude tokens (insufficient Anthropic credits)."
                 + human
                 + " Please top up at https://console.anthropic.com/account/billing/overview.",
             }
@@ -230,11 +246,11 @@ def api_error_response(exc):
 
 
 def main() -> None:
-    """Interactive command-line chat with Tynna."""
-    agent = TynnaAgent()
+    """Interactive command-line chat with Mykola."""
+    agent = MykolaAgent()
     history: list[dict] = []
 
-    print(f"Tynna study assistant ({MODEL}, {agent.chunk_count} knowledge chunks)")
+    print(f"Mykola study assistant ({MODEL}, {agent.chunk_count} knowledge chunks)")
     print("Ask about English grammar, vocabulary, or the app. Type 'exit' to quit.\n")
 
     while True:
@@ -248,7 +264,7 @@ def main() -> None:
         if question.lower() in ("exit", "quit"):
             break
 
-        print("Tynna> ", end="", flush=True)
+        print("Mykola> ", end="", flush=True)
         try:
             result = agent.answer(
                 question, history, on_text=lambda t: print(t, end="", flush=True)

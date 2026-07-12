@@ -1,5 +1,5 @@
 """
-Word list and gap-filling exercise generator for Tynna.
+Word list and gap-filling exercise generator for Mykola.
 Provides functionality to extract word lists from the knowledge base,
 generate explanations/translations, and create fill-the-gaps exercises.
 """

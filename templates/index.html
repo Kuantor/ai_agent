@@ -6,11 +6,11 @@
     <div class="chat-box" id="chatBox">
         <div class="chat-message welcome-message">
             <div class="message-avatar">
-                <img src="{{ url_for('static', filename='img/tynna_avatar.jpg') }}" alt="Tynna">
+                <img src="{{ url_for('static', filename='img/mykola_avatar.jpg') }}" alt="Mykola">
             </div>
             <div class="message-content">
-                <p><strong>Tynna:</strong> Hi there! 👋 I'm Tynna, your English learning assistant. Ask me anything about grammar, vocabulary, phrasal verbs, or learning tips. I'm here to help you on your learning journey!</p>
-                <small class="message-time">Ready to help you learn.</small>
+                <p><strong>Mykola:</strong> Good day! 🎩 I'm Mykola, your English learning companion. Ask me anything about grammar, vocabulary, phrasal verbs, or learning strategies — it would be my pleasure to assist.</p>
+                <small class="message-time">At your service.</small>
             </div>
         </div>
     </div>
@@ -35,7 +35,7 @@
     </div>
 
     <div class="loading-indicator" id="loadingIndicator" style="display: none;">
-        <span class="spinner"></span> Tynna is thinking...
+        <span class="spinner"></span> Mykola is thinking...
     </div>
 </div>
 
@@ -126,10 +126,10 @@
         } else {
             messageDiv.innerHTML = `
                 <div class="message-avatar">
-                    <img src="{{ url_for('static', filename='img/tynna_avatar.jpg') }}" alt="Tynna">
+                    <img src="{{ url_for('static', filename='img/mykola_avatar.jpg') }}" alt="Mykola">
                 </div>
                 <div class="message-content">
-                    <p><strong>Tynna:</strong></p>
+                    <p><strong>Mykola:</strong></p>
                     <p>${formatAssistantText(text)}</p>
                 </div>
             `;

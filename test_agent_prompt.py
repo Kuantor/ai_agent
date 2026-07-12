@@ -1,5 +1,5 @@
 """
-Offline checks for Tynna persona and typo-handling prompt rules.
+Offline checks for Mykola persona and typo-handling prompt rules.
 Run:  python test_agent_prompt.py
 """
 
@@ -12,7 +12,7 @@ def main() -> None:
     # Issue #31: no "buddy" wording in persona text.
     assert "buddy" not in prompt, "SYSTEM_PROMPT must not use 'buddy'"
 
-    # Persona should frame Tynna as companion/guide.
+    # Persona should frame Mykola as companion/guide.
     assert "english companion" in prompt, "Expected 'English companion' wording"
     assert "study guide" in prompt, "Expected 'study guide' wording"
 

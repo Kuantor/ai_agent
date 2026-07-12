@@ -100,7 +100,7 @@ conversation begins directly beneath the unified header. See
 
 ## Word Lists and Gap Exercises (Issue #11)
 
-Tynna can now generate vocabulary word lists and fill-the-gaps exercises from
+Mykola can now generate vocabulary word lists and fill-the-gaps exercises from
 the knowledge base. These features help users practice and reinforce their
 English learning.
 
@@ -116,20 +116,20 @@ English learning.
 
 ### Usage:
 
-Users can ask Tynna for vocabulary lists or practice exercises, and the agent
+Users can ask Mykola for vocabulary lists or practice exercises, and the agent
 will recognize these requests and suggest using the word list or gap exercise
 features. The system prompt includes guidance for handling such requests.
 
 Example:
 ```
 user> I want a vocabulary list
-tynna> I can generate a vocabulary list from the learning database! 
+mykola> I can generate a vocabulary list from the learning database! 
        Check the word list feature in the app.
 ```
 
 ### Flashcards Database:
 
-Tynna can retrieve flashcards via `cards_db.py` from either:
+Mykola can retrieve flashcards via `cards_db.py` from either:
 - a real KuantorFlow MySQL table `flashcards` (preferred), or
 - a SQLite table `flashcards`, or
 - local JSON fallback (`data/flashcards.json`) for standalone demos.
@@ -154,17 +154,17 @@ SQLite fallback example:
 - `GET /api/cards/search?q=<query>` — search cards by word or translation
 - `POST /api/cards/add` — add a new flashcard (requires: word, translation; optional: explanation, category)
 
-**Tynna's Capabilities:**
-When a user asks for "a list of all the cards in the database", "show me the list of words", or similar, Tynna now:
-- She can retrieve the full card list and explain how to browse by category
-- She can help search for specific words
-- She can guide users to add new cards to the database
-- She recognizes requests like "cards about travel" and can suggest filtering by category
+**Mykola's Capabilities:**
+When a user asks for "a list of all the cards in the database", "show me the list of words", or similar, Mykola now:
+- He can retrieve the full card list and explain how to browse by category
+- He can help search for specific words
+- He can guide users to add new cards to the database
+- He recognizes requests like "cards about travel" and can suggest filtering by category
 
 Example with new database:
 ```
 user> Can you give me a list of all the cards in the database?
-tynna> Of course! The database has 8 flashcards across several categories: 
+mykola> Of course! The database has 8 flashcards across several categories: 
        grammar, linguistics, travel, and vocabulary. 
        
        You can:
@@ -177,9 +177,9 @@ tynna> Of course! The database has 8 flashcards across several categories:
 
 ## Dialog Logging (Issue #23)
 
-Every web chat dialog with Tynna is logged to the repository directory:
+Every web chat dialog with Mykola is logged to the repository directory:
 
-- `tynna_logs/`
+- `mykola_logs/`
 
 File naming format:
 
@@ -189,7 +189,7 @@ Each file contains timestamped user/assistant exchanges for that dialog.
 
 ## Persona Tone (Issue #10)
 
-Tynna's conversational style was refined to feel warmer, more feminine, and
+Mykola's conversational style was refined to feel warmer, more feminine, and
 more personable while staying appropriate for a learning assistant.
 
 Key adjustments:
