@@ -18,6 +18,18 @@ from cards_db import FlashcardsDB, format_card_list_for_chat
 app = Flask(__name__)
 app.json.sort_keys = False
 
+# Cap request bodies at 1 MB. Generous for text — a long tutoring conversation
+# or a pasted study passage stays well under this — while blocking oversized
+# payloads that could exhaust memory or run up Anthropic API costs.
+app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024
+
+
+@app.errorhandler(413)
+def request_too_large(e):
+    """Return JSON (not Flask's default HTML page) when a body exceeds MAX_CONTENT_LENGTH."""
+    return jsonify({"error": "Your message is too long. Please shorten it and try again."}), 413
+
+
 # Load the knowledge base and Anthropic client once, reuse across requests.
 agent = TynnaAgent()
 word_list_gen = WordListGenerator(agent.kb.chunks)
