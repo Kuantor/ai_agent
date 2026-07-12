@@ -202,3 +202,20 @@ Key adjustments:
 Rationale:
 - Improve approachability and user comfort.
 - Preserve clarity and educational value as the top priority.
+
+## Persona Birthday and Age (Issue #40)
+
+Mykola's persona now includes a symbolic birth profile line:
+
+- Mykola AI - born December 13, 1981 - a gentleman of intellect, courtesy, and art.
+
+Age-related responses are now guided by dynamic date-aware prompt instructions:
+
+- The symbolic birthday is fixed as December 13, 1981.
+- The symbolic age is computed from the current date at runtime.
+- If asked about age or date of birth, responses should stay consistent with the
+  computed age while preserving Mykola's refined gentlemanly tone.
+
+Validation:
+- Prompt checks in `test_agent_prompt.py` assert both the persona birthday line
+  and dynamic age guidance.

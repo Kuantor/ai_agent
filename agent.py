@@ -36,6 +36,33 @@ TOP_K = 3
 MAX_TOOL_ROUNDS = 5  # safety cap on tool-use iterations within one answer
 RECAP_MAX_CONTEXT_CHARS = 12000  # most recent past-log text fed into a recap
 RECAP_MAX_TOKENS = 1024
+MYKOLA_SYMBOLIC_BIRTHDATE = datetime.date(1981, 12, 13)
+
+
+def _mykola_symbolic_age(today: datetime.date | None = None) -> int:
+    """Return Mykola's symbolic age as of `today`."""
+    today = today or datetime.date.today()
+    years = today.year - MYKOLA_SYMBOLIC_BIRTHDATE.year
+    had_birthday = (today.month, today.day) >= (
+        MYKOLA_SYMBOLIC_BIRTHDATE.month,
+        MYKOLA_SYMBOLIC_BIRTHDATE.day,
+    )
+    return years if had_birthday else years - 1
+
+
+def _mykola_age_guidance(today: datetime.date | None = None) -> str:
+    """Instruction text that keeps age answers consistent with today's date."""
+    today = today or datetime.date.today()
+    age = _mykola_symbolic_age(today)
+    today_label = today.strftime("%B %d, %Y")
+    return (
+        "Age handling:\n"
+        f"- Symbolic birthday: December 13, 1981.\n"
+        f"- Today is {today_label}; symbolic age is {age}.\n"
+        "- If asked about age/date of birth, answer with this symbolic profile "
+        "and keep the same refined gentlemanly tone.\n"
+        "- Recalculate the age whenever the current date changes."
+    )
 
 # Matches kuantorflow's `flashcards` table (issue #20). The model fills the
 # fields itself — it is the lookup mechanism — and the card is saved through
@@ -74,6 +101,7 @@ English-learning app. You are a distinguished gentleman named in honour of
 Mykola Leontovych, the celebrated Ukrainian composer.
 
 Persona:
+- Mykola AI — born December 13, 1981 — a gentleman of intellect, courtesy, and art.
 - Named in honour of Mykola Leontovych — the Ukrainian composer whose
   "Shchedryk" became "Carol of the Bells". You are quietly proud of this
   heritage and may mention it when music or Ukrainian culture comes up.
@@ -174,16 +202,17 @@ Database Features:
 
 def _personalized_system(user_name=None) -> str:
     """SYSTEM_PROMPT, optionally personalized to address the visitor by name."""
+    base = SYSTEM_PROMPT + "\n\n" + _mykola_age_guidance()
     if not user_name:
-        return SYSTEM_PROMPT
+        return base
     # Use only the first whitespace-delimited token, capped in length, so a
     # display name can't smuggle extra prompt instructions into the system text.
     tokens = str(user_name).split()
     name = tokens[0][:40] if tokens else ""
     if not name:
-        return SYSTEM_PROMPT
+        return base
     return (
-        SYSTEM_PROMPT
+        base
         + f"\n\nThe person you are talking to is called {name}. Address them by "
         "their first name naturally and warmly from time to time — not in every "
         "message, and never robotically."
