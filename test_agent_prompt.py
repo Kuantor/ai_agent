@@ -3,6 +3,8 @@ Offline checks for Mykola persona and typo-handling prompt rules.
 Run:  python test_agent_prompt.py
 """
 
+import datetime
+
 from agent import SYSTEM_PROMPT, _personalized_system
 
 
@@ -28,6 +30,8 @@ def main() -> None:
 
     # Issue #35: persona traits must be spelled out, not implied.
     for trait in (
+        "born december 13, 1981",
+        "a gentleman of intellect, courtesy, and art",
         "leontovych",            # heritage
         "british",               # poise
         "french",                # second language
@@ -44,6 +48,16 @@ def main() -> None:
 
     # Voice examples exist but must not be parroted.
     assert "never repeat these verbatim" in prompt, "Missing verbatim guard on examples"
+
+    # Issue #40: symbolic birthday and age handling should be explicit.
+    dynamic = _personalized_system().lower()
+    assert "age handling:" in dynamic, "Missing explicit age handling section"
+    assert "symbolic birthday: december 13, 1981." in dynamic, "Missing symbolic birthday guidance"
+
+    today = datetime.date.today()
+    expected_age = today.year - 1981 - ((today.month, today.day) < (12, 13))
+    assert f"symbolic age is {expected_age}." in dynamic, "Missing current symbolic age value"
+    assert "recalculate the age whenever the current date changes." in dynamic, "Missing age recalculation rule"
 
     print("all prompt checks passed")
 
