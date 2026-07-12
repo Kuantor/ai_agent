@@ -16,7 +16,7 @@ from word_list import WordListGenerator
 from cards_db import FlashcardsDB, format_card_list_for_chat
 
 app = Flask(__name__)
-app.config["JSON_SORT_KEYS"] = False
+app.json.sort_keys = False
 
 # Load the knowledge base and Anthropic client once, reuse across requests.
 agent = TynnaAgent()
