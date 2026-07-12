@@ -143,6 +143,51 @@
         return div.innerHTML;
     }
 
+    // Music Player for Issue #12
+    let isPlaying = false;
+    let currentAudioIndex = 0;
+    const songs = [
+        '{{ url_for("static", filename="audio/silent_affection.mp3") }}',
+        '{{ url_for("static", filename="audio/kiss_of_venus.mp3") }}'
+    ];
+    let audioElements = [];
+    const musicBtn = document.getElementById('musicBtn');
+
+    // Initialize audio elements
+    songs.forEach((song, index) => {
+        const audio = new Audio(song);
+        audio.addEventListener('ended', () => {
+            if (index === 0) {
+                // After first song ends, play second song
+                currentAudioIndex = 1;
+                audioElements[1].play();
+            } else {
+                // After second song ends, reset state
+                isPlaying = false;
+                currentAudioIndex = 0;
+                musicBtn.classList.remove('playing');
+                musicBtn.textContent = '🎵 Play';
+            }
+        });
+        audioElements.push(audio);
+    });
+
+    musicBtn.addEventListener('click', () => {
+        if (!isPlaying) {
+            // Start playing from the current index
+            audioElements[currentAudioIndex].play();
+            isPlaying = true;
+            musicBtn.classList.add('playing');
+            musicBtn.textContent = '⏸ Pause';
+        } else {
+            // Pause playback
+            audioElements[currentAudioIndex].pause();
+            isPlaying = false;
+            musicBtn.classList.remove('playing');
+            musicBtn.textContent = '▶ Resume';
+        }
+    });
+
     // Focus input on load
     window.addEventListener('load', () => questionInput.focus());
 </script>
