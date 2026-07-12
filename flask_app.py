@@ -13,7 +13,7 @@ from flask import Flask, jsonify, render_template, request
 
 from agent import TynnaAgent, api_error_response
 from word_list import WordListGenerator
-from cards_db import FlashcardsDB
+from cards_db import FlashcardsDB, format_card_list_for_chat
 
 app = Flask(__name__)
 app.config["JSON_SORT_KEYS"] = False
@@ -22,6 +22,48 @@ app.config["JSON_SORT_KEYS"] = False
 agent = TynnaAgent()
 word_list_gen = WordListGenerator(agent.kb.chunks)
 cards_db = FlashcardsDB()
+
+
+def _chat_card_response(question: str) -> str | None:
+    """Return a direct flashcard response when the user asks database-card actions."""
+    q = (question or "").lower().strip()
+
+    if not q:
+        return None
+
+    # Explicit full-list request.
+    full_list_markers = (
+        "all cards",
+        "list of cards",
+        "list all cards",
+        "cards in the database",
+        "cards from the database",
+    )
+    if any(marker in q for marker in full_list_markers):
+        return format_card_list_for_chat(cards_db.get_all_cards())
+
+    # Category-based request like "cards about travel".
+    categories = cards_db.get_categories()
+    if "cards about" in q or "cards for" in q or "cards in" in q:
+        for category in categories:
+            if category.lower() in q:
+                cards = cards_db.get_cards_by_category(category)
+                if not cards:
+                    return f"I checked the '{category}' category, but there are no cards yet."
+                return format_card_list_for_chat(cards)
+
+    # Search-like request.
+    if "find card" in q or "search card" in q or "look up" in q:
+        terms = [w for w in q.replace("?", " ").split() if len(w) > 2]
+        for term in terms[::-1]:
+            if term in {"find", "card", "cards", "search", "look", "for", "the", "and"}:
+                continue
+            results = cards_db.search_cards(term)
+            if results:
+                return format_card_list_for_chat(results)
+        return "I searched the flashcards database but did not find a matching card."
+
+    return None
 
 
 @app.route("/")
@@ -46,6 +88,13 @@ def chat():
         return jsonify({"error": "Empty question"}), 400
 
     try:
+        card_response = _chat_card_response(question)
+        if card_response is not None:
+            history = list(history or [])
+            history.append({"role": "user", "content": question})
+            history.append({"role": "assistant", "content": card_response})
+            return jsonify({"response": card_response, "sources": [], "history": history})
+
         return jsonify(agent.answer(question, history))
     except anthropic.APIError as e:
         body, status = api_error_response(e)

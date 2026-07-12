@@ -127,3 +127,34 @@ tynna> I can generate a vocabulary list from the learning database!
        Check the word list feature in the app.
 ```
 
+### Flashcards Database:
+
+Tynna can now retrieve and manage flashcards from a database (`cards_db.py`).
+The database stores words/expressions with translations and explanations.
+
+**Features:**
+- `GET /api/cards` — retrieve all flashcards
+- `GET /api/cards/category/<category>` — get cards from a specific category (e.g., "grammar", "vocabulary", "travel")
+- `GET /api/cards/search?q=<query>` — search cards by word or translation
+- `POST /api/cards/add` — add a new flashcard (requires: word, translation; optional: explanation, category)
+
+**Tynna's Capabilities:**
+When a user asks for "a list of all the cards in the database" or similar, Tynna now knows:
+- She can retrieve the full card list and explain how to browse by category
+- She can help search for specific words
+- She can guide users to add new cards to the database
+- She recognizes requests like "cards about travel" and can suggest filtering by category
+
+Example with new database:
+```
+user> Can you give me a list of all the cards in the database?
+tynna> Of course! The database has 8 flashcards across several categories: 
+       grammar, linguistics, travel, and vocabulary. 
+       
+       You can:
+       - View all cards
+       - Browse by category (travel, grammar, vocabulary, etc.)
+       - Search for specific words
+       
+       What cards would you like to explore?
+```
