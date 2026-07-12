@@ -240,6 +240,75 @@ class FlashcardsDB:
         with open(self.db_path, "w", encoding="utf-8") as f:
             json.dump(self.cards, f, ensure_ascii=False, indent=2)
 
+    # Full kuantorflow flashcards structure (issue #20).
+    FULL_CARD_FIELDS = (
+        "word", "pos", "explanation_en", "examples_en",
+        "translation_ukr", "examples_ukr", "translation_rus", "examples_rus",
+        "topic",
+    )
+
+    def add_full_flashcard(self, entry: Dict[str, Any]) -> Dict:
+        """
+        Insert one flashcard with the full kuantorflow column structure.
+        Used by the Mykola agent's add_flashcard tool in standalone mode
+        (embedded kuantorflow injects its own save_flashcard instead).
+
+        Only columns that actually exist in the target table are written, so
+        this works against the real kuantorflow schema as well as simplified
+        ones. Returns the saved card dict (with id where the backend has one).
+        """
+        word = str(entry.get("word") or "").strip()
+        if not word:
+            raise ValueError("word is required")
+
+        if self.mysql_config or self.sqlite_path:
+            columns = self._mysql_columns() if self.mysql_config else self._sqlite_columns()
+            lookup = {c.lower(): c for c in columns}
+            data = {}
+            for field in self.FULL_CARD_FIELDS:
+                value = entry.get(field)
+                if value and field.lower() in lookup:
+                    data[lookup[field.lower()]] = str(value)
+            if not data:
+                raise RuntimeError(
+                    f"Table '{self.table_name}' has none of the flashcard columns."
+                )
+            cols = list(data.keys())
+            values = tuple(data[c] for c in cols)
+            if self.mysql_config:
+                col_sql = ", ".join(f"`{c}`" for c in cols)
+                placeholders = ", ".join(["%s"] * len(cols))
+                with self._mysql_connect() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"INSERT INTO `{self.table_name}` ({col_sql}) VALUES ({placeholders})",
+                            values,
+                        )
+                        new_id = cur.lastrowid
+            else:
+                col_sql = ", ".join(cols)
+                placeholders = ", ".join(["?"] * len(cols))
+                with sqlite3.connect(self.sqlite_path) as conn:
+                    cur = conn.execute(
+                        f"INSERT INTO {self.table_name} ({col_sql}) VALUES ({placeholders})",
+                        values,
+                    )
+                    conn.commit()
+                    new_id = cur.lastrowid
+            return {"id": new_id, **data}
+
+        # JSON fallback: normalize to the demo card shape.
+        card = {
+            "id": len(self.cards) + 1,
+            "word": word,
+            "translation": str(entry.get("translation_ukr") or entry.get("translation_rus") or "").strip(),
+            "explanation": str(entry.get("explanation_en") or "").strip(),
+            "category": str(entry.get("topic") or "general").strip(),
+        }
+        self.cards.append(card)
+        self.save()
+        return card
+
     def add_card(self, word: str, translation: str, explanation: str, category: str = "general") -> Dict:
         """
         Add a new flashcard to the database.

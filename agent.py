@@ -18,6 +18,7 @@ Run the CLI:  python agent.py   (needs ANTHROPIC_API_KEY in .env)
 
 import datetime
 import email.utils as eut
+import json
 import sys
 import time
 from pathlib import Path
@@ -32,6 +33,38 @@ load_dotenv(Path(__file__).with_name(".env"))
 MODEL = "claude-opus-4-8"
 MAX_TOKENS = 8192
 TOP_K = 3
+MAX_TOOL_ROUNDS = 5  # safety cap on tool-use iterations within one answer
+
+# Matches kuantorflow's `flashcards` table (issue #20). The model fills the
+# fields itself — it is the lookup mechanism — and the card is saved through
+# the injected card_saver (kuantorflow's save_flashcard when embedded).
+ADD_FLASHCARD_TOOL = {
+    "name": "add_flashcard",
+    "description": (
+        "Save a new flashcard to the KuantorFlow database. Use this immediately "
+        "when the user asks to add/save a word or expression as a flashcard — "
+        "their request is the confirmation; do not ask again. Fill in every "
+        "field you can determine yourself."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "word": {"type": "string", "description": "The English word or expression"},
+            "pos": {"type": "string", "description": "Part of speech (noun, verb, adjective, adverb, phrase...)"},
+            "explanation_en": {"type": "string", "description": "Short English definition/explanation"},
+            "examples_en": {"type": "string", "description": "One or two short English example sentences"},
+            "translation_ukr": {"type": "string", "description": "Ukrainian translation(s), comma-separated"},
+            "examples_ukr": {"type": "string", "description": "Ukrainian example sentence(s), optional"},
+            "translation_rus": {"type": "string", "description": "Russian translation(s), comma-separated"},
+            "examples_rus": {"type": "string", "description": "Russian example sentence(s), optional"},
+            "topic": {"type": "string", "description": "Topic/category; infer from the conversation, else 'general'"},
+        },
+        "required": ["word"],
+    },
+}
+
+# Only these keys ever reach the card saver.
+CARD_FIELDS = tuple(ADD_FLASHCARD_TOOL["input_schema"]["properties"].keys())
 
 SYSTEM_PROMPT = """\
 You are Mykola, the English companion and study guide of KuantorFlow, an
@@ -122,8 +155,15 @@ Database Features:
     can retrieve the full list, or they can request cards from a specific category 
     (like "grammar", "vocabulary", "travel").
   - "cards about [topic]" → Suggest filtering by category or searching.
-  - "add a new card/word" → Mention they can add cards with a word, translation,
-    and explanation.
+  - "add this word / save it as a flashcard / додай слово" → use the
+    add_flashcard tool STRAIGHT AWAY. The request itself is the confirmation:
+    do not ask "shall I add it?" first. Fill in every field you can determine
+    yourself — word, pos, a concise explanation_en, one example sentence in
+    examples_en, translation_ukr AND translation_rus, and a topic inferred
+    from the conversation (else "general"). After the tool reports success,
+    confirm in one elegant sentence what was saved; if it reports an error,
+    apologise briefly and suggest the site's "Look up & save" instead.
+    Never claim a card was saved unless the tool actually returned success.
 - You can help users search for specific words in the database as well.
 - Refer to the flashcards feature when discussing vocabulary learning or when
   users ask to add/organize their own words.
@@ -168,17 +208,51 @@ class MykolaAgent:
     copying the logic.
     """
 
-    def __init__(self, knowledge_dir: Path | None = None):
+    def __init__(self, knowledge_dir: Path | None = None, card_saver=None):
+        """
+        `card_saver`, if given, is a callable(entry_dict) that persists one
+        flashcard (kuantorflow injects its save_flashcard — the same mechanism
+        as the Look up & save flow). Standalone, the FlashcardsDB is used.
+        """
         self.kb = KnowledgeBase(knowledge_dir) if knowledge_dir else KnowledgeBase()
         self.client = anthropic.Anthropic()
+        self.card_saver = card_saver or self._default_card_saver
+        self._cards_db = None  # lazy FlashcardsDB for the standalone saver
 
     @property
     def chunk_count(self) -> int:
         return len(self.kb.chunks)
 
+    def _default_card_saver(self, entry: dict) -> dict:
+        """Standalone fallback: save through this repo's FlashcardsDB."""
+        if self._cards_db is None:
+            from cards_db import FlashcardsDB
+            self._cards_db = FlashcardsDB()
+        return self._cards_db.add_full_flashcard(entry)
+
+    def _run_add_flashcard(self, tool_input: dict) -> str:
+        """Execute the add_flashcard tool; always return a JSON string the
+        model can relay (errors included, so it can apologise gracefully)."""
+        entry = {}
+        for field in CARD_FIELDS:
+            value = str(tool_input.get(field) or "").strip()
+            if value:
+                entry[field] = value
+        entry.setdefault("topic", "general")
+        if not entry.get("word"):
+            return json.dumps({"status": "error", "message": "word is required"})
+        try:
+            self.card_saver(entry)
+            return json.dumps({"status": "saved", "card": entry}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
+
     def answer(self, question: str, history=None, on_text=None, user_name=None) -> dict:
         """
-        Answer a question with retrieval-augmented generation.
+        Answer a question with retrieval-augmented generation. The model may
+        call the add_flashcard tool mid-answer to save cards the user asked
+        for; tool calls are executed here and the exchange continues until the
+        model produces its final text.
 
         `history` is the prior [{"role", "content"}] messages (may be None).
         `on_text`, if given, is called with each streamed text delta (used by
@@ -186,36 +260,68 @@ class MykolaAgent:
         `user_name`, if given, is the signed-in visitor's first name; Mykola is
         then asked to address them by it naturally during the conversation.
 
-        Returns {"response", "sources", "history"} where `history` includes the
-        new user and assistant turns. Anthropic errors propagate to the caller
-        (use `api_error_response` to format them for a Flask response).
+        Returns {"response", "sources", "history", "saved_cards"}. The returned
+        history contains plain text turns only (JSON-safe for web clients);
+        tool exchanges stay internal to this call. Anthropic errors propagate
+        to the caller (use `api_error_response` to format them for Flask).
         """
         question = (question or "").strip()
         history = list(history or [])
 
         chunks = self.kb.retrieve(question, top_k=TOP_K)
-        history.append({"role": "user", "content": build_user_message(question, chunks)})
+        user_message = build_user_message(question, chunks)
 
+        # Working conversation for the API: may accumulate tool_use blocks and
+        # tool results that the client-facing history never sees.
+        convo = history + [{"role": "user", "content": user_message}]
         response_text = ""
-        with self.client.messages.stream(
-            model=MODEL,
-            max_tokens=MAX_TOKENS,
-            thinking={"type": "adaptive"},
-            system=_personalized_system(user_name),
-            messages=history,
-        ) as stream:
-            for text in stream.text_stream:
-                response_text += text
-                if on_text:
-                    on_text(text)
-            stream.get_final_message()
+        saved_cards = []
 
+        for _ in range(MAX_TOOL_ROUNDS):
+            with self.client.messages.stream(
+                model=MODEL,
+                max_tokens=MAX_TOKENS,
+                thinking={"type": "adaptive"},
+                system=_personalized_system(user_name),
+                tools=[ADD_FLASHCARD_TOOL],
+                messages=convo,
+            ) as stream:
+                for text in stream.text_stream:
+                    response_text += text
+                    if on_text:
+                        on_text(text)
+                message = stream.get_final_message()
+
+            if message.stop_reason != "tool_use":
+                break
+
+            convo.append({"role": "assistant", "content": message.content})
+            results = []
+            for block in message.content:
+                if block.type == "tool_use":
+                    result_json = self._run_add_flashcard(dict(block.input))
+                    result = json.loads(result_json)
+                    if result.get("status") == "saved":
+                        saved_cards.append(result["card"])
+                    results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result_json,
+                    })
+            convo.append({"role": "user", "content": results})
+
+        history.append({"role": "user", "content": user_message})
         history.append({"role": "assistant", "content": response_text})
         sources = [
             {"file": c.source, "heading": c.heading, "score": round(c.score, 2)}
             for c in chunks
         ]
-        return {"response": response_text, "sources": sources, "history": history}
+        return {
+            "response": response_text,
+            "sources": sources,
+            "history": history,
+            "saved_cards": saved_cards,
+        }
 
 
 def _extract_retry_seconds(exc) -> int | None:
