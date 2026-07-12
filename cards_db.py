@@ -1,27 +1,225 @@
-"""
-Flashcards database for Tynna.
-Manages and retrieves flashcards (words/expressions with translations and explanations).
+"""Flashcards data access for Tynna.
+
+Supported sources (in priority order):
+- MySQL table (for KuantorFlow integration)
+- SQLite table
+- Local JSON fallback for standalone demos
 """
 
 import json
+import os
+import sqlite3
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
+
+try:
+    import pymysql
+    from pymysql.cursors import DictCursor
+except ImportError:  # Optional unless MySQL mode is configured.
+    pymysql = None
+    DictCursor = None
 
 
 class FlashcardsDB:
-    """
-    Simple JSON-based flashcards database.
-    Stores cards with word, translation, explanation, and category.
-    """
+    """Flashcards store with MySQL/SQLite/JSON backends."""
 
     def __init__(self, db_path: Optional[Path] = None):
-        """Initialize the flashcards database."""
-        if db_path is None:
-            db_path = Path(__file__).parent / "data" / "flashcards.json"
-        
-        self.db_path = db_path
-        self.cards = []
-        self.load_or_create()
+        """Initialize DB source from env, with JSON fallback.
+
+        Environment options:
+        - ``FLASHCARDS_DB_URL``: ``mysql://user:pass@host:3306/db``
+        - ``FLASHCARDS_DB_SQLITE_PATH``: absolute/relative sqlite file path
+        - ``FLASHCARDS_DB_URL``: ``sqlite:///...`` URL
+        - ``FLASHCARDS_MYSQL_HOST``/``PORT``/``USER``/``PASSWORD``/``DATABASE``
+        - ``FLASHCARDS_DB_TABLE``: optional table name (default: ``flashcards``)
+        """
+        self.table_name = (os.getenv("FLASHCARDS_DB_TABLE", "flashcards").strip() or "flashcards")
+        self._validate_table_name(self.table_name)
+
+        self.mysql_config = self._resolve_mysql_config()
+        self.sqlite_path = self._resolve_sqlite_path()
+        self.db_path = db_path or (Path(__file__).parent / "data" / "flashcards.json")
+        self.cards: List[Dict] = []
+
+        if self.mysql_config:
+            if not self._mysql_has_table(self.table_name):
+                raise RuntimeError(
+                    f"MySQL DB configured but table '{self.table_name}' was not found in "
+                    f"database '{self.mysql_config['database']}'."
+                )
+        elif self.sqlite_path:
+            if not self._sqlite_has_table(self.table_name):
+                raise RuntimeError(
+                    f"SQLite DB configured at '{self.sqlite_path}' but table '{self.table_name}' was not found."
+                )
+        else:
+            self.load_or_create()
+
+    @staticmethod
+    def _validate_table_name(name: str) -> None:
+        """Allow simple SQL identifiers only to avoid SQL injection via env."""
+        if not name.replace("_", "").isalnum() or name[0].isdigit():
+            raise RuntimeError("FLASHCARDS_DB_TABLE must be a simple SQL identifier.")
+
+    def _resolve_mysql_config(self) -> Optional[Dict[str, Any]]:
+        """Resolve MySQL connection config from URL or separate env vars."""
+        db_url = os.getenv("FLASHCARDS_DB_URL", "").strip()
+        if db_url.startswith("mysql://") or db_url.startswith("mysql+pymysql://"):
+            if pymysql is None:
+                raise RuntimeError(
+                    "MySQL mode configured but 'pymysql' is not installed. "
+                    "Install it and restart the app."
+                )
+
+            parsed = urlparse(db_url.replace("mysql+pymysql://", "mysql://", 1))
+            db_name = (parsed.path or "").lstrip("/")
+            if not db_name:
+                raise RuntimeError("MySQL URL must include database name, e.g. mysql://user:pass@host/db")
+            return {
+                "host": parsed.hostname or "localhost",
+                "port": parsed.port or 3306,
+                "user": parsed.username,
+                "password": parsed.password or "",
+                "database": db_name,
+            }
+
+        mysql_host = os.getenv("FLASHCARDS_MYSQL_HOST", "").strip()
+        if mysql_host:
+            if pymysql is None:
+                raise RuntimeError(
+                    "MySQL mode configured but 'pymysql' is not installed. "
+                    "Install it and restart the app."
+                )
+            return {
+                "host": mysql_host,
+                "port": int(os.getenv("FLASHCARDS_MYSQL_PORT", "3306")),
+                "user": os.getenv("FLASHCARDS_MYSQL_USER", "").strip(),
+                "password": os.getenv("FLASHCARDS_MYSQL_PASSWORD", ""),
+                "database": os.getenv("FLASHCARDS_MYSQL_DATABASE", "").strip(),
+            }
+        return None
+
+    def _resolve_sqlite_path(self) -> Optional[Path]:
+        """Resolve sqlite path from env vars, if configured."""
+        explicit = os.getenv("FLASHCARDS_DB_SQLITE_PATH", "").strip()
+        if explicit:
+            return Path(explicit).expanduser()
+
+        url = os.getenv("FLASHCARDS_DB_URL", "").strip()
+        if url.startswith("sqlite:///"):
+            return Path(url.replace("sqlite:///", "", 1)).expanduser()
+        return None
+
+    def _mysql_connect(self):
+        """Open a MySQL connection using current config."""
+        return pymysql.connect(
+            host=self.mysql_config["host"],
+            port=self.mysql_config["port"],
+            user=self.mysql_config["user"],
+            password=self.mysql_config["password"],
+            database=self.mysql_config["database"],
+            charset="utf8mb4",
+            cursorclass=DictCursor,
+            autocommit=True,
+        )
+
+    def _mysql_has_table(self, table_name: str) -> bool:
+        """Check if target MySQL DB has a table."""
+        try:
+            with self._mysql_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema = %s AND table_name = %s
+                        LIMIT 1
+                        """,
+                        (self.mysql_config["database"], table_name),
+                    )
+                    return cur.fetchone() is not None
+        except Exception:
+            return False
+
+    def _mysql_columns(self) -> List[str]:
+        """Fetch flashcards table columns from MySQL."""
+        with self._mysql_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SHOW COLUMNS FROM `{self.table_name}`")
+                rows = cur.fetchall()
+        return [r["Field"] for r in rows]
+
+    def _sqlite_has_table(self, table_name: str) -> bool:
+        """Check if target sqlite DB has a table."""
+        try:
+            with sqlite3.connect(self.sqlite_path) as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (table_name,),
+                ).fetchone()
+                return row is not None
+        except sqlite3.Error:
+            return False
+
+    def _sqlite_columns(self) -> List[str]:
+        """Fetch flashcards table columns from sqlite."""
+        with sqlite3.connect(self.sqlite_path) as conn:
+            rows = conn.execute(f"PRAGMA table_info({self.table_name})").fetchall()
+        return [r[1] for r in rows]
+
+    @staticmethod
+    def _pick_column(columns: List[str], candidates: List[str]) -> Optional[str]:
+        """Choose the first matching candidate column (case-insensitive)."""
+        lookup = {c.lower(): c for c in columns}
+        for cand in candidates:
+            if cand.lower() in lookup:
+                return lookup[cand.lower()]
+        return None
+
+    def _normalize_row(self, data: Dict[str, Any], columns: List[str]) -> Dict:
+        """Map arbitrary flashcards schema to app-normalized card dict."""
+        word_col = self._pick_column(columns, ["word", "term", "english", "front", "english_word", "word_en"])
+        translation_col = self._pick_column(
+            columns,
+            ["translation", "meaning", "back", "native", "ukrainian", "russian", "translation_uk", "translation_ru"],
+        )
+        explanation_col = self._pick_column(columns, ["explanation", "example", "description", "note", "notes"])
+        category_col = self._pick_column(columns, ["category", "topic", "tag", "part_of_speech", "pos"])
+        id_col = self._pick_column(columns, ["id", "card_id"])
+
+        return {
+            "id": data.get(id_col) if id_col else None,
+            "word": str(data.get(word_col, "")).strip() if word_col else "",
+            "translation": str(data.get(translation_col, "")).strip() if translation_col else "",
+            "explanation": str(data.get(explanation_col, "")).strip() if explanation_col else "",
+            "category": str(data.get(category_col, "general")).strip() if category_col else "general",
+        }
+
+    def _query_mysql_cards(self, where: str = "", params: tuple = ()) -> List[Dict]:
+        """Run a cards query against MySQL and normalize rows."""
+        columns = self._mysql_columns()
+        query = f"SELECT * FROM `{self.table_name}`"
+        if where:
+            query += f" WHERE {where}"
+        with self._mysql_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                rows = cur.fetchall()
+        cards = [self._normalize_row(r, columns) for r in rows]
+        return [c for c in cards if c.get("word")]
+
+    def _query_sqlite_cards(self, where: str = "", params: tuple = ()) -> List[Dict]:
+        """Run a cards query against sqlite and normalize rows."""
+        columns = self._sqlite_columns()
+        query = f"SELECT * FROM {self.table_name}"
+        if where:
+            query += f" WHERE {where}"
+        with sqlite3.connect(self.sqlite_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(query, params).fetchall()
+        cards = [self._normalize_row(dict(r), columns) for r in rows]
+        return [c for c in cards if c.get("word")]
 
     def load_or_create(self):
         """Load database from file or create with sample data if it doesn't exist."""
@@ -47,12 +245,18 @@ class FlashcardsDB:
         Add a new flashcard to the database.
         Returns the created card dict.
         """
+        if self.mysql_config or self.sqlite_path:
+            raise RuntimeError(
+                "Adding cards through this endpoint is disabled for external DBs; "
+                "manage cards in KuantorFlow directly."
+            )
+
         card = {
             "id": len(self.cards) + 1,
             "word": word,
             "translation": translation,
             "explanation": explanation,
-            "category": category
+            "category": category,
         }
         self.cards.append(card)
         self.save()
@@ -60,28 +264,62 @@ class FlashcardsDB:
 
     def get_all_cards(self) -> List[Dict]:
         """Get all flashcards."""
+        if self.mysql_config:
+            return self._query_mysql_cards()
+        if self.sqlite_path:
+            return self._query_sqlite_cards()
         return self.cards
 
     def get_cards_by_category(self, category: str) -> List[Dict]:
         """Get flashcards by category."""
+        if self.mysql_config:
+            # Try direct category match first; if schema has no category, fallback to client-side filter.
+            try:
+                return self._query_mysql_cards("LOWER(category)=LOWER(%s)", (category,))
+            except Exception:
+                pass
+            cards = self._query_mysql_cards()
+            return [c for c in cards if c.get("category", "").lower() == category.lower()]
+        if self.sqlite_path:
+            # Try direct category match first; if schema has no category, fallback to client-side filter.
+            try:
+                return self._query_sqlite_cards("LOWER(category)=LOWER(?)", (category,))
+            except sqlite3.Error:
+                pass
+            cards = self._query_sqlite_cards()
+            return [c for c in cards if c.get("category", "").lower() == category.lower()]
         return [c for c in self.cards if c.get("category", "").lower() == category.lower()]
 
     def search_cards(self, query: str) -> List[Dict]:
         """Search cards by word or translation (partial match)."""
-        query = query.lower()
-        results = [
-            c for c in self.cards
-            if query in c.get("word", "").lower() or query in c.get("translation", "").lower()
+        q = query.lower()
+        cards = self.get_all_cards()
+        return [
+            c
+            for c in cards
+            if q in c.get("word", "").lower()
+            or q in c.get("translation", "").lower()
+            or q in c.get("explanation", "").lower()
         ]
-        return results
 
     def get_cards_count(self) -> int:
         """Get total number of cards."""
+        if self.mysql_config:
+            with self._mysql_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(f"SELECT COUNT(*) AS c FROM `{self.table_name}`")
+                    row = cur.fetchone()
+                    return int((row or {}).get("c", 0))
+        if self.sqlite_path:
+            with sqlite3.connect(self.sqlite_path) as conn:
+                row = conn.execute(f"SELECT COUNT(*) FROM {self.table_name}").fetchone()
+                return int(row[0] if row else 0)
         return len(self.cards)
 
     def get_categories(self) -> List[str]:
         """Get list of all categories."""
-        categories = set(c.get("category", "general") for c in self.cards)
+        cards = self.get_all_cards()
+        categories = set(c.get("category", "general") for c in cards)
         return sorted(list(categories))
 
     @staticmethod

@@ -129,8 +129,24 @@ tynna> I can generate a vocabulary list from the learning database!
 
 ### Flashcards Database:
 
-Tynna can now retrieve and manage flashcards from a database (`cards_db.py`).
-The database stores words/expressions with translations and explanations.
+Tynna can retrieve flashcards via `cards_db.py` from either:
+- a real KuantorFlow MySQL table `flashcards` (preferred), or
+- a SQLite table `flashcards`, or
+- local JSON fallback (`data/flashcards.json`) for standalone demos.
+
+To connect to real KuantorFlow MySQL in `.env`, use either:
+- `FLASHCARDS_DB_URL=mysql://user:password@host:3306/kuantorflow`
+or separate vars:
+- `FLASHCARDS_MYSQL_HOST=127.0.0.1`
+- `FLASHCARDS_MYSQL_PORT=3306`
+- `FLASHCARDS_MYSQL_USER=your_user`
+- `FLASHCARDS_MYSQL_PASSWORD=your_password`
+- `FLASHCARDS_MYSQL_DATABASE=kuantorflow`
+- `FLASHCARDS_DB_TABLE=flashcards`
+
+SQLite fallback example:
+- `FLASHCARDS_DB_SQLITE_PATH=C:/path/to/kuantorflow.db`
+- `FLASHCARDS_DB_URL=sqlite:///C:/path/to/kuantorflow.db`
 
 **Features:**
 - `GET /api/cards` — retrieve all flashcards
@@ -139,7 +155,7 @@ The database stores words/expressions with translations and explanations.
 - `POST /api/cards/add` — add a new flashcard (requires: word, translation; optional: explanation, category)
 
 **Tynna's Capabilities:**
-When a user asks for "a list of all the cards in the database" or similar, Tynna now knows:
+When a user asks for "a list of all the cards in the database", "show me the list of words", or similar, Tynna now:
 - She can retrieve the full card list and explain how to browse by category
 - She can help search for specific words
 - She can guide users to add new cards to the database

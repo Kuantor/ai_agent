@@ -35,9 +35,16 @@ def _chat_card_response(question: str) -> str | None:
     full_list_markers = (
         "all cards",
         "list of cards",
+        "list of words",
+        "list of flashcards",
+        "show me the list of words",
+        "show me the list of cards",
+        "show words",
+        "show cards",
         "list all cards",
         "cards in the database",
         "cards from the database",
+        "words in the database",
     )
     if any(marker in q for marker in full_list_markers):
         return format_card_list_for_chat(cards_db.get_all_cards())
