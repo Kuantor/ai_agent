@@ -14,7 +14,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import anthropic
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, url_for
 
 from agent import TynnaAgent, api_error_response
 from word_list import WordListGenerator
@@ -27,6 +27,15 @@ app.json.sort_keys = False
 # or a pasted study passage stays well under this — while blocking oversized
 # payloads that could exhaust memory or run up Anthropic API costs.
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024
+
+
+@app.context_processor
+def inject_tynna_media():
+    """Resolve Tynna asset names to this app's own static URLs. The shared
+    _tynna_about.html partial calls tynna_media(); kuantorflow provides its
+    own version so the same markup works when the partial is reused there."""
+    return {"tynna_media": lambda f: url_for("static", filename="img/" + f)}
+
 
 LOG_DIR = Path(__file__).parent / "tynna_logs"
 LOG_DIR.mkdir(exist_ok=True)
