@@ -97,3 +97,33 @@ Notes:
 The chat header has been integrated into the main site header so the
 conversation begins directly beneath the unified header. See
 `templates/base.html` and `templates/index.html` for the layout changes.
+
+## Word Lists and Gap Exercises (Issue #11)
+
+Tynna can now generate vocabulary word lists and fill-the-gaps exercises from
+the knowledge base. These features help users practice and reinforce their
+English learning.
+
+### Features:
+
+- **Word List Generator** (`word_list.py`): Extracts key terms and phrases from
+  the knowledge base, with definitions and sources.
+- **Gap Exercises**: Creates fill-the-gaps exercises from knowledge base content
+  where users must guess missing words.
+- **API Endpoints**:
+  - `POST /api/word-list` — generates a vocabulary list
+  - `GET /api/gap-exercise` — generates a fill-the-gaps exercise
+
+### Usage:
+
+Users can ask Tynna for vocabulary lists or practice exercises, and the agent
+will recognize these requests and suggest using the word list or gap exercise
+features. The system prompt includes guidance for handling such requests.
+
+Example:
+```
+user> I want a vocabulary list
+tynna> I can generate a vocabulary list from the learning database! 
+       Check the word list feature in the app.
+```
+
