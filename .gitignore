@@ -13,4 +13,5 @@ venv/
 .spyproject/
 
 # Runtime dialog logs (keep directory via .gitkeep)
-mykola_logs/chat_*.txt
+mykola_logs/*
+!mykola_logs/.gitkeep
