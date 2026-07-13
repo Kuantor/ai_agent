@@ -41,12 +41,19 @@ LOG_DIR = Path(__file__).parent / "mykola_logs"
 LOG_DIR.mkdir(exist_ok=True)
 
 
+def _new_chat_id() -> str:
+    """Readable chat id: the date & time the chat started, plus a short
+    suffix so two chats starting the same second get separate logs
+    (issue #25). The client reuses the id for the whole conversation."""
+    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "_" + uuid4().hex[:4]
+
+
 def _safe_chat_id(raw_chat_id: str | None) -> str:
-    """Return a filesystem-safe chat id."""
+    """Return a filesystem-safe chat id, minting a readable one if absent."""
     if not raw_chat_id:
-        return datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8]
+        return _new_chat_id()
     safe = re.sub(r"[^A-Za-z0-9_-]", "_", raw_chat_id.strip())
-    return safe or (datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8])
+    return safe[:64] or _new_chat_id()
 
 
 def _append_chat_log(chat_id: str, user_text: str, assistant_text: str) -> None:

@@ -41,7 +41,9 @@
 
 <script>
     let chatHistory = [];
-    let chatId = (Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8));
+    // The server mints a readable date-time chat id on the first message
+    // (issue #25); we adopt it from the response and reuse it all chat long.
+    let chatId = null;
 
     const chatBox = document.getElementById('chatBox');
     const chatForm = document.getElementById('chatForm');
