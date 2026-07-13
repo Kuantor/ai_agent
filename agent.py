@@ -296,14 +296,19 @@ class MykolaAgent:
 
         prompt = (
             "<past_conversations>\n" + text + "\n</past_conversations>\n\n"
-            "The learner above has just returned for a new session. In your own "
-            "voice, briefly recap the key points of their previous conversations "
-            "— topics discussed, words they learned or saved, questions they "
-            "asked (3-5 sentences at most). Then suggest two or three specific "
-            "follow-up questions or topics to continue with, as a short list. "
-            "Only mention things actually present in the logs — never invent. "
-            "Address the learner directly, and do not mention the logs "
-            "themselves or that conversations are recorded unless asked."
+            "The learner above has just returned for a new session. The "
+            "conversations are in chronological order, so the FINAL one is the "
+            "most recent: treat it as the primary context — its topic should "
+            "stay central to your recap and to what you propose next "
+            "(ai_agent#39). In your own voice, briefly recap the key points of "
+            "their previous conversations — topics discussed, words they "
+            "learned or saved, questions they asked (3-5 sentences at most), "
+            "leading with the most recent conversation. Then suggest two or "
+            "three specific follow-up questions or topics to continue with, as "
+            "a short list, again favouring the most recent topic. Only mention "
+            "things actually present in the logs — never invent. Address the "
+            "learner directly, and do not mention the logs themselves or that "
+            "conversations are recorded unless asked."
         )
         message = self.client.messages.create(
             model=MODEL,
