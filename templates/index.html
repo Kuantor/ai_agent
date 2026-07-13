@@ -44,7 +44,8 @@
         uiMessages: 'mykola_chat_ui_messages',
         history: 'mykola_chat_history',
         chatId: 'mykola_chat_id',
-        sources: 'mykola_chat_sources'
+        sources: 'mykola_chat_sources',
+        uiState: 'mykola_chat_ui_state'
     };
 
     function isHardRefresh() {
@@ -56,8 +57,9 @@
     }
 
     function readSessionJson(key, fallback) {
+        const storage = getStorage();
         try {
-            const raw = sessionStorage.getItem(key);
+            const raw = storage.getItem(key);
             if (!raw) return fallback;
             return JSON.parse(raw);
         } catch {
@@ -65,16 +67,38 @@
         }
     }
 
+    function getStorage() {
+        // Prefer localStorage so chat survives internal navigation patterns
+        // that may recreate browsing context for the same origin.
+        try {
+            const probe = '__mykola_storage_probe__';
+            localStorage.setItem(probe, '1');
+            localStorage.removeItem(probe);
+            return localStorage;
+        } catch {
+            return sessionStorage;
+        }
+    }
+
     function clearPersistedChatState() {
-        Object.values(CHAT_STORAGE_KEYS).forEach((key) => sessionStorage.removeItem(key));
+        const storage = getStorage();
+        Object.values(CHAT_STORAGE_KEYS).forEach((key) => {
+            try {
+                storage.removeItem(key);
+            } catch {
+                // Ignore storage access errors.
+            }
+        });
     }
 
     function persistChatState() {
+        const storage = getStorage();
         try {
-            sessionStorage.setItem(CHAT_STORAGE_KEYS.uiMessages, JSON.stringify(uiMessages));
-            sessionStorage.setItem(CHAT_STORAGE_KEYS.history, JSON.stringify(chatHistory));
-            sessionStorage.setItem(CHAT_STORAGE_KEYS.chatId, JSON.stringify(chatId));
-            sessionStorage.setItem(CHAT_STORAGE_KEYS.sources, JSON.stringify(lastSources));
+            storage.setItem(CHAT_STORAGE_KEYS.uiMessages, JSON.stringify(uiMessages));
+            storage.setItem(CHAT_STORAGE_KEYS.history, JSON.stringify(chatHistory));
+            storage.setItem(CHAT_STORAGE_KEYS.chatId, JSON.stringify(chatId));
+            storage.setItem(CHAT_STORAGE_KEYS.sources, JSON.stringify(lastSources));
+            storage.setItem(CHAT_STORAGE_KEYS.uiState, JSON.stringify(chatUiState));
         } catch {
             // Ignore storage quota or serialization failures.
         }
@@ -90,6 +114,10 @@
     // (issue #25); we adopt it from the response and reuse it all chat long.
     let chatId = readSessionJson(CHAT_STORAGE_KEYS.chatId, null);
     let lastSources = readSessionJson(CHAT_STORAGE_KEYS.sources, []);
+    let chatUiState = readSessionJson(CHAT_STORAGE_KEYS.uiState, {
+        isMaximized: true,
+        scrollTop: null
+    });
 
     const chatBox = document.getElementById('chatBox');
     const chatForm = document.getElementById('chatForm');
@@ -98,6 +126,17 @@
     const loadingIndicator = document.getElementById('loadingIndicator');
     const chatSources = document.getElementById('chatSources');
     const sourcesList = document.getElementById('sourcesList');
+    const chatContainer = document.querySelector('.chat-container');
+
+    function applyRestoredUiState() {
+        // Keep chat visibly open/maximized after internal page navigation.
+        if (chatContainer) {
+            chatContainer.dataset.widgetState = chatUiState?.isMaximized === false ? 'minimized' : 'maximized';
+        }
+        if (typeof chatUiState?.scrollTop === 'number') {
+            chatBox.scrollTop = chatUiState.scrollTop;
+        }
+    }
 
     function renderSources(sources) {
         const list = Array.isArray(sources) ? sources : [];
@@ -119,6 +158,7 @@
     function restoreChatUiFromSession() {
         if (!Array.isArray(uiMessages) || uiMessages.length === 0) {
             renderSources(lastSources);
+            applyRestoredUiState();
             return;
         }
 
@@ -127,9 +167,19 @@
             addMessageToChat(message.role, message.text || '', false);
         });
         renderSources(lastSources);
+        applyRestoredUiState();
     }
 
     restoreChatUiFromSession();
+
+    chatBox.addEventListener('scroll', () => {
+        chatUiState = {
+            ...(chatUiState || {}),
+            isMaximized: true,
+            scrollTop: chatBox.scrollTop
+        };
+        persistChatState();
+    });
 
     chatForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -211,6 +261,11 @@
 
         if (shouldPersist) {
             uiMessages.push({ role, text });
+            chatUiState = {
+                ...(chatUiState || {}),
+                isMaximized: true,
+                scrollTop: chatBox.scrollHeight
+            };
             persistChatState();
         }
     }
