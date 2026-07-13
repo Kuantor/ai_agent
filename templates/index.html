@@ -40,10 +40,56 @@
 </div>
 
 <script>
-    let chatHistory = [];
+    const CHAT_STORAGE_KEYS = {
+        uiMessages: 'mykola_chat_ui_messages',
+        history: 'mykola_chat_history',
+        chatId: 'mykola_chat_id',
+        sources: 'mykola_chat_sources'
+    };
+
+    function isHardRefresh() {
+        const nav = performance.getEntriesByType('navigation');
+        if (nav && nav.length > 0 && nav[0].type) {
+            return nav[0].type === 'reload';
+        }
+        return false;
+    }
+
+    function readSessionJson(key, fallback) {
+        try {
+            const raw = sessionStorage.getItem(key);
+            if (!raw) return fallback;
+            return JSON.parse(raw);
+        } catch {
+            return fallback;
+        }
+    }
+
+    function clearPersistedChatState() {
+        Object.values(CHAT_STORAGE_KEYS).forEach((key) => sessionStorage.removeItem(key));
+    }
+
+    function persistChatState() {
+        try {
+            sessionStorage.setItem(CHAT_STORAGE_KEYS.uiMessages, JSON.stringify(uiMessages));
+            sessionStorage.setItem(CHAT_STORAGE_KEYS.history, JSON.stringify(chatHistory));
+            sessionStorage.setItem(CHAT_STORAGE_KEYS.chatId, JSON.stringify(chatId));
+            sessionStorage.setItem(CHAT_STORAGE_KEYS.sources, JSON.stringify(lastSources));
+        } catch {
+            // Ignore storage quota or serialization failures.
+        }
+    }
+
+    if (isHardRefresh()) {
+        clearPersistedChatState();
+    }
+
+    let uiMessages = readSessionJson(CHAT_STORAGE_KEYS.uiMessages, []);
+    let chatHistory = readSessionJson(CHAT_STORAGE_KEYS.history, []);
     // The server mints a readable date-time chat id on the first message
     // (issue #25); we adopt it from the response and reuse it all chat long.
-    let chatId = null;
+    let chatId = readSessionJson(CHAT_STORAGE_KEYS.chatId, null);
+    let lastSources = readSessionJson(CHAT_STORAGE_KEYS.sources, []);
 
     const chatBox = document.getElementById('chatBox');
     const chatForm = document.getElementById('chatForm');
@@ -52,6 +98,38 @@
     const loadingIndicator = document.getElementById('loadingIndicator');
     const chatSources = document.getElementById('chatSources');
     const sourcesList = document.getElementById('sourcesList');
+
+    function renderSources(sources) {
+        const list = Array.isArray(sources) ? sources : [];
+        if (list.length === 0) {
+            chatSources.style.display = 'none';
+            sourcesList.innerHTML = '';
+            return;
+        }
+
+        sourcesList.innerHTML = '';
+        list.forEach(source => {
+            const li = document.createElement('li');
+            li.textContent = `${source.file} / ${source.heading} (score: ${source.score})`;
+            sourcesList.appendChild(li);
+        });
+        chatSources.style.display = 'block';
+    }
+
+    function restoreChatUiFromSession() {
+        if (!Array.isArray(uiMessages) || uiMessages.length === 0) {
+            renderSources(lastSources);
+            return;
+        }
+
+        uiMessages.forEach(message => {
+            if (!message || !message.role) return;
+            addMessageToChat(message.role, message.text || '', false);
+        });
+        renderSources(lastSources);
+    }
+
+    restoreChatUiFromSession();
 
     chatForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -86,19 +164,10 @@
                 addMessageToChat('assistant', data.response || 'No response returned.');
                 chatHistory = data.history || chatHistory;
                 chatId = data.chat_id || chatId;
-                
-                // Show sources
-                if (data.sources && data.sources.length > 0) {
-                    sourcesList.innerHTML = '';
-                    data.sources.forEach(source => {
-                        const li = document.createElement('li');
-                        li.textContent = `${source.file} / ${source.heading} (score: ${source.score})`;
-                        sourcesList.appendChild(li);
-                    });
-                    chatSources.style.display = 'block';
-                } else {
-                    chatSources.style.display = 'none';
-                }
+
+                lastSources = Array.isArray(data.sources) ? data.sources : [];
+                renderSources(lastSources);
+                persistChatState();
             }
         } catch (error) {
             addMessageToChat('error', 'Network error: ' + error.message);
@@ -109,7 +178,7 @@
         }
     });
 
-    function addMessageToChat(role, text) {
+    function addMessageToChat(role, text, shouldPersist = true) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `chat-message ${role}-message`;
 
@@ -139,6 +208,11 @@
 
         chatBox.appendChild(messageDiv);
         chatBox.scrollTop = chatBox.scrollHeight;
+
+        if (shouldPersist) {
+            uiMessages.push({ role, text });
+            persistChatState();
+        }
     }
 
     function escapeHtml(text) {
