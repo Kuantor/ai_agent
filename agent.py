@@ -200,9 +200,31 @@ Database Features:
 """
 
 
-def _personalized_system(user_name=None) -> str:
-    """SYSTEM_PROMPT, optionally personalized to address the visitor by name."""
+# Languages the site's visibility switches can hide (kuantorflow#46/#79).
+# A whitelist, so a caller-supplied value can never smuggle instructions
+# into the system prompt (same caution as with user_name below).
+HIDEABLE_LANGUAGES = ("Ukrainian", "Russian")
+
+
+def _personalized_system(user_name=None, hidden_languages=None) -> str:
+    """SYSTEM_PROMPT, optionally personalized to address the visitor by name
+    and/or told which translation languages the visitor has hidden on the
+    site (kuantorflow#46/#79)."""
     base = SYSTEM_PROMPT + "\n\n" + _mykola_age_guidance()
+
+    hidden = [l for l in (hidden_languages or []) if l in HIDEABLE_LANGUAGES]
+    if hidden:
+        names = " and ".join(hidden)
+        base += (
+            f"\n\nThe learner has turned off {names} translations in their site "
+            f"settings. Do not write {names} translations of words or phrases "
+            "in your answers, and do not offer them — unless the learner "
+            "explicitly asks for one in the conversation, which always takes "
+            "precedence. When saving flashcards with the add_flashcard tool, "
+            "still fill in every translation field as usual: the setting hides "
+            "translations from view, it does not remove them from saved cards."
+        )
+
     if not user_name:
         return base
     # Use only the first whitespace-delimited token, capped in length, so a
@@ -278,7 +300,8 @@ class MykolaAgent:
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
-    def recap(self, past_conversations: str, user_name=None) -> str:
+    def recap(self, past_conversations: str, user_name=None,
+              hidden_languages=None) -> str:
         """
         One-shot welcome-back recap for a returning learner (issue #30).
 
@@ -313,14 +336,15 @@ class MykolaAgent:
         message = self.client.messages.create(
             model=MODEL,
             max_tokens=RECAP_MAX_TOKENS,
-            system=_personalized_system(user_name),
+            system=_personalized_system(user_name, hidden_languages),
             messages=[{"role": "user", "content": prompt}],
         )
         return "".join(
             block.text for block in message.content if block.type == "text"
         ).strip()
 
-    def answer(self, question: str, history=None, on_text=None, user_name=None) -> dict:
+    def answer(self, question: str, history=None, on_text=None, user_name=None,
+               hidden_languages=None) -> dict:
         """
         Answer a question with retrieval-augmented generation. The model may
         call the add_flashcard tool mid-answer to save cards the user asked
@@ -332,6 +356,9 @@ class MykolaAgent:
         the CLI to print tokens live).
         `user_name`, if given, is the signed-in visitor's first name; Mykola is
         then asked to address them by it naturally during the conversation.
+        `hidden_languages`, if given, lists translation languages the visitor
+        has hidden on the site (kuantorflow#46/#79, e.g. ["Russian"]); Mykola
+        then avoids writing translations in them unless explicitly asked.
 
         Returns {"response", "sources", "history", "saved_cards"}. The returned
         history contains plain text turns only (JSON-safe for web clients);
@@ -355,7 +382,7 @@ class MykolaAgent:
                 model=MODEL,
                 max_tokens=MAX_TOKENS,
                 thinking={"type": "adaptive"},
-                system=_personalized_system(user_name),
+                system=_personalized_system(user_name, hidden_languages),
                 tools=[ADD_FLASHCARD_TOOL],
                 messages=convo,
             ) as stream:
