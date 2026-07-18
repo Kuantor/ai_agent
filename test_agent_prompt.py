@@ -49,6 +49,14 @@ def main() -> None:
     # Voice examples exist but must not be parroted.
     assert "never repeat these verbatim" in prompt, "Missing verbatim guard on examples"
 
+    # Issue #48: Mykola must know he is Claude-powered and own up to being an AI.
+    assert "claude" in prompt, "SYSTEM_PROMPT must mention Claude"
+    assert "anthropic" in prompt, "SYSTEM_PROMPT must mention Anthropic"
+    assert "powered by anthropic's claude" in prompt, \
+        "Missing the Claude-powered identity line"
+    assert "never claim to be human" in prompt, "Missing the never-claim-human rule"
+    assert "never deny being an ai" in prompt, "Missing the never-deny-AI rule"
+
     # Issue #40: symbolic birthday and age handling should be explicit.
     dynamic = _personalized_system().lower()
     assert "age handling:" in dynamic, "Missing explicit age handling section"
