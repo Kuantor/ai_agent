@@ -30,7 +30,10 @@ KuantorFlow calls `MykolaAgent`:
 
 - `answer(question, history, on_text=None, user_name=None, hidden_languages=None)`
   → `{response, sources, history, saved_cards}`
-- `recap(past_conversations, user_name=None, hidden_languages=None)`
+- `recap(past_conversations, user_name=None, hidden_languages=None, away_hours=None)`
+  — with `away_hours` (#54) the site has just restarted a stale conversation,
+  so the recap opens by acknowledging the break; `build_recap_prompt()` and
+  `describe_gap()` are module level so the wording is checkable offline.
 - `__init__(card_saver=…)` — KuantorFlow **injects its `save_flashcard`** so
   Mykola saves through the site's one write path; standalone uses `FlashcardsDB`.
 
