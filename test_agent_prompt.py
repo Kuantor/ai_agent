@@ -94,6 +94,36 @@ def check_knowledge_base() -> None:
     print("all knowledge-base checks passed")
 
 
+def check_recap_prompt() -> None:
+    """Issue #54: a recap for a restarted conversation tells Mykola how long
+    the learner was away; the plain welcome-back recap is unchanged."""
+    from agent import build_recap_prompt, describe_gap
+
+    assert describe_gap(0.5) == "less than an hour"
+    assert describe_gap(1) == "about 1 hour"
+    assert describe_gap(5.4) == "about 5 hours"
+    assert describe_gap(50) == "about 2 days"
+    assert describe_gap(None) == "", "a missing gap must not reach the prompt"
+    assert describe_gap("nonsense") == ""
+
+    plain = build_recap_prompt("we discussed phrasal verbs")
+    assert "just returned for a new session" in plain
+    assert "has been away for" not in plain, "no break wording without away_hours"
+
+    restarted = build_recap_prompt("we discussed phrasal verbs", away_hours=5.4)
+    assert "has been away for about 5 hours" in restarted
+    assert "started afresh" in restarted
+    assert "welcoming them back" in restarted
+    # the recap instructions themselves must survive in both forms
+    for prompt in (plain, restarted):
+        assert "chronological order" in prompt
+        assert "never invent" in prompt
+        assert "we discussed phrasal verbs" in prompt
+
+    print("all recap-prompt checks passed")
+
+
 if __name__ == "__main__":
     main()
+    check_recap_prompt()
     check_knowledge_base()

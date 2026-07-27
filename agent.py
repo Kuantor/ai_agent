@@ -257,6 +257,56 @@ def _personalized_system(user_name=None, hidden_languages=None) -> str:
     )
 
 
+def describe_gap(hours) -> str:
+    """A human phrase for a break of `hours`: 'about 5 hours', 'about 2 days'
+    (issue #54). Mykola is told how long the learner was away in words, not
+    decimals, so he can acknowledge it naturally. '' if `hours` isn't a
+    number, which keeps a bad value from reaching the prompt."""
+    try:
+        hours = float(hours)
+    except (TypeError, ValueError):
+        return ""
+    if hours < 1:
+        return "less than an hour"
+    if hours < 24:
+        count = round(hours)
+        return f"about {count} hour" + ("" if count == 1 else "s")
+    count = round(hours / 24)
+    return f"about {count} day" + ("" if count == 1 else "s")
+
+
+def build_recap_prompt(past_conversations: str, away_hours=None) -> str:
+    """The recap request sent to Claude (module level so it can be checked
+    without an API call). With `away_hours` the learner is returning to a
+    conversation the site just restarted for them (#54), so Mykola greets the
+    break; without it, this is the plain welcome-back recap (#30)."""
+    gap = describe_gap(away_hours) if away_hours is not None else ""
+    opening = (
+        f"The learner above has been away for {gap} and has just come back, "
+        "so their previous conversation is being started afresh. Open by "
+        "welcoming them back and acknowledging the break in one short, warm "
+        "sentence — no apology, no fuss. Then, in the same message: the "
+        if gap else
+        "The learner above has just returned for a new session. The "
+    )
+    return (
+        "<past_conversations>\n" + past_conversations + "\n</past_conversations>\n\n"
+        + opening +
+        "conversations are in chronological order, so the FINAL one is the "
+        "most recent: treat it as the primary context — its topic should "
+        "stay central to your recap and to what you propose next "
+        "(ai_agent#39). In your own voice, briefly recap the key points of "
+        "their previous conversations — topics discussed, words they "
+        "learned or saved, questions they asked (3-5 sentences at most), "
+        "leading with the most recent conversation. Then suggest two or "
+        "three specific follow-up questions or topics to continue with, as "
+        "a short list, again favouring the most recent topic. Only mention "
+        "things actually present in the logs — never invent. Address the "
+        "learner directly, and do not mention the logs themselves or that "
+        "conversations are recorded unless asked."
+    )
+
+
 def build_user_message(question: str, chunks) -> str:
     """Wrap the retrieved context and the question into one user message."""
     if not chunks:
@@ -317,7 +367,7 @@ class MykolaAgent:
             return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def recap(self, past_conversations: str, user_name=None,
-              hidden_languages=None) -> str:
+              hidden_languages=None, away_hours=None) -> str:
         """
         One-shot welcome-back recap for a returning learner (issue #30).
 
@@ -326,6 +376,12 @@ class MykolaAgent:
         short recap of key points plus suggested follow-up topics, or ""
         when there is nothing to recap. Anthropic errors propagate to the
         caller, which should treat the recap as optional.
+
+        `away_hours` (issue #54) is how long the learner has been silent when
+        the site restarts a stale conversation for them. Given it, Mykola
+        opens by acknowledging the break instead of greeting them as if the
+        thread had never paused. Optional, so a caller running an older
+        KuantorFlow keeps working unchanged.
         """
         text = (past_conversations or "").strip()
         if not text:
@@ -333,22 +389,7 @@ class MykolaAgent:
         # Keep the most recent material when logs exceed the budget.
         text = text[-RECAP_MAX_CONTEXT_CHARS:]
 
-        prompt = (
-            "<past_conversations>\n" + text + "\n</past_conversations>\n\n"
-            "The learner above has just returned for a new session. The "
-            "conversations are in chronological order, so the FINAL one is the "
-            "most recent: treat it as the primary context — its topic should "
-            "stay central to your recap and to what you propose next "
-            "(ai_agent#39). In your own voice, briefly recap the key points of "
-            "their previous conversations — topics discussed, words they "
-            "learned or saved, questions they asked (3-5 sentences at most), "
-            "leading with the most recent conversation. Then suggest two or "
-            "three specific follow-up questions or topics to continue with, as "
-            "a short list, again favouring the most recent topic. Only mention "
-            "things actually present in the logs — never invent. Address the "
-            "learner directly, and do not mention the logs themselves or that "
-            "conversations are recorded unless asked."
-        )
+        prompt = build_recap_prompt(text, away_hours)
         message = self.client.messages.create(
             model=MODEL,
             max_tokens=RECAP_MAX_TOKENS,
