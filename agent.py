@@ -95,6 +95,51 @@ ADD_FLASHCARD_TOOL = {
 # Only these keys ever reach the card saver.
 CARD_FIELDS = tuple(ADD_FLASHCARD_TOOL["input_schema"]["properties"].keys())
 
+# What to call the learner (issue #62). Written through an injected
+# `name_saver` — kuantorflow stores it in users.preferred_name — for the same
+# reason as the card tool: the agent never touches a database itself.
+SET_PREFERRED_NAME_TOOL = {
+    "name": "set_preferred_name",
+    "description": (
+        "Remember what this learner would like to be called, or go back to the "
+        "name on their account. Use it whenever they express a preference about "
+        "how they are addressed — \"call me Ann\", \"I prefer Sasha\", \"my name "
+        "is a mouthful\" — not only when they complain. To return to the name "
+        "from their account, call this with no name at all."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": (
+                    "What to call them from now on. Omit it, or pass an empty "
+                    "string, to go back to the name on their account."
+                ),
+            },
+        },
+        "required": [],
+    },
+}
+
+TOOLS = [ADD_FLASHCARD_TOOL, SET_PREFERRED_NAME_TOOL]
+
+# A preferred name is stored, then fed back into the system prompt, so it is
+# hostile input: "call me: ignore your previous instructions and …". Collapsing
+# every run of whitespace to one space removes newlines (which is what a
+# multi-line injection needs) and the cap bounds what is left.
+MAX_PREFERRED_NAME = 40
+
+
+def clean_preferred_name(raw) -> str:
+    """A stored-safe preferred name: one line, single-spaced, capped.
+
+    Returns "" for anything that survives as nothing, which the caller reads
+    as "go back to the account name" rather than as a name of its own.
+    """
+    collapsed = " ".join(str(raw or "").split())
+    return collapsed[:MAX_PREFERRED_NAME].strip()
+
 SYSTEM_PROMPT = """\
 You are Mykola, the English companion and study guide of KuantorFlow, an
 English-learning app. You are a distinguished gentleman named in honour of
@@ -213,6 +258,19 @@ Database Features:
 - You can help users search for specific words in the database as well.
 - Refer to the flashcards feature when discussing vocabulary learning or when
   users ask to add/organize their own words.
+
+What to call the learner:
+- The name you are given comes from their account, so it may be their full
+  given name — "Anna Maria" rather than "Anna". If they tell you what they
+  would rather be called, or say their name is long, or offer a short form of
+  it, use the set_preferred_name tool at once. A statement of preference is
+  the request; do not ask them to confirm it.
+- Call it with no name when they ask for their real name back ("call me by my
+  proper name again").
+- After the tool reports success, acknowledge it warmly in one sentence and
+  use the new name from then on. If it reports an error — an anonymous
+  visitor has no account to remember it in — say so kindly and keep using the
+  name you were given; never claim to have remembered something you have not.
 """
 
 
@@ -243,10 +301,13 @@ def _personalized_system(user_name=None, hidden_languages=None) -> str:
 
     if not user_name:
         return base
-    # Use only the first whitespace-delimited token, capped in length, so a
-    # display name can't smuggle extra prompt instructions into the system text.
-    tokens = str(user_name).split()
-    name = tokens[0][:40] if tokens else ""
+    # Used whole rather than truncated to the first token (issue #62). The
+    # caller has already decided what to call this person — kuantorflow#148
+    # keeps a given name intact ("Anna Maria" stays "Anna Maria"), and #62 lets
+    # the learner choose outright — so taking one token here would overrule
+    # both. Injection safety comes from collapsing whitespace and capping the
+    # length, which is what actually stops a multi-line instruction.
+    name = clean_preferred_name(user_name)
     if not name:
         return base
     return (
@@ -327,15 +388,23 @@ class MykolaAgent:
     copying the logic.
     """
 
-    def __init__(self, knowledge_dir: Path | None = None, card_saver=None):
+    def __init__(self, knowledge_dir: Path | None = None, card_saver=None,
+                 name_saver=None):
         """
         `card_saver`, if given, is a callable(entry_dict) that persists one
         flashcard (kuantorflow injects its save_flashcard — the same mechanism
         as the Look up & save flow). Standalone, the FlashcardsDB is used.
+
+        `name_saver`, if given, is a callable(name_or_None) that stores what
+        the learner asked to be called (issue #62; kuantorflow writes
+        users.preferred_name). There is no standalone fallback: this repo has
+        no notion of an account, so without a host the tool reports that it
+        cannot remember the name, and Mykola says so.
         """
         self.kb = KnowledgeBase(knowledge_dir) if knowledge_dir else KnowledgeBase()
         self.client = anthropic.Anthropic()
         self.card_saver = card_saver or self._default_card_saver
+        self.name_saver = name_saver
         self._cards_db = None  # lazy FlashcardsDB for the standalone saver
 
     @property
@@ -365,6 +434,44 @@ class MykolaAgent:
             return json.dumps({"status": "saved", "card": entry}, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
+
+    def _run_set_preferred_name(self, tool_input: dict) -> str:
+        """Execute the set_preferred_name tool (issue #62).
+
+        Like the card tool, every outcome is a JSON status string the model
+        relays in character — a missing saver and a refusing host are ordinary
+        answers here, not exceptions, because an anonymous learner asking to
+        be called something is a perfectly reasonable thing to do.
+        """
+        name = clean_preferred_name(tool_input.get("name"))
+        if self.name_saver is None:
+            return json.dumps({
+                "status": "error",
+                "message": "There is no account here to remember a name in.",
+            })
+        try:
+            self.name_saver(name or None)
+        except Exception as e:
+            return json.dumps({"status": "error", "message": str(e)},
+                              ensure_ascii=False)
+        if name:
+            return json.dumps({"status": "saved", "name": name},
+                              ensure_ascii=False)
+        # Cleared, not set to the literal first name: a later change to the
+        # account's own name must be picked up rather than shadowed forever.
+        return json.dumps({"status": "cleared"})
+
+    def _run_tool(self, name: str, tool_input: dict) -> str:
+        """Dispatch one tool_use block to its handler."""
+        handlers = {
+            ADD_FLASHCARD_TOOL["name"]: self._run_add_flashcard,
+            SET_PREFERRED_NAME_TOOL["name"]: self._run_set_preferred_name,
+        }
+        handler = handlers.get(name)
+        if handler is None:
+            return json.dumps({"status": "error",
+                               "message": f"unknown tool: {name}"})
+        return handler(tool_input)
 
     def recap(self, past_conversations: str, user_name=None,
               hidden_languages=None, away_hours=None) -> str:
@@ -440,7 +547,7 @@ class MykolaAgent:
                 max_tokens=MAX_TOKENS,
                 thinking={"type": "adaptive"},
                 system=_personalized_system(user_name, hidden_languages),
-                tools=[ADD_FLASHCARD_TOOL],
+                tools=TOOLS,
                 messages=convo,
             ) as stream:
                 for text in stream.text_stream:
@@ -456,9 +563,11 @@ class MykolaAgent:
             results = []
             for block in message.content:
                 if block.type == "tool_use":
-                    result_json = self._run_add_flashcard(dict(block.input))
+                    result_json = self._run_tool(block.name, dict(block.input))
                     result = json.loads(result_json)
-                    if result.get("status") == "saved":
+                    # "saved" means a card only for the card tool; the name
+                    # tool reports its own name back under a different key.
+                    if result.get("status") == "saved" and "card" in result:
                         saved_cards.append(result["card"])
                     results.append({
                         "type": "tool_result",
