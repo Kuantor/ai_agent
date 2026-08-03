@@ -47,6 +47,42 @@ REFUSAL_REPLY = (
 )
 
 
+def _model_label(model: str = MODEL) -> str:
+    """A model id as a person would say it: claude-opus-5 -> "Claude Opus 5".
+
+    Derived rather than written out so Mykola cannot end up naming a model he
+    is not running on — changing MODEL changes what he says about himself.
+    """
+    parts = [p for p in model.split("-") if p]
+    if parts and parts[0].lower() == "claude":
+        parts = parts[1:]
+    # A dated snapshot id (…-4-5-20251001) carries a stamp nobody says aloud.
+    numbers = [p for p in parts if p.isdigit() and len(p) <= 2]
+    words = [p.capitalize() for p in parts if not p.isdigit()]
+    label = " ".join(["Claude"] + words)
+    return f"{label} {'.'.join(numbers)}" if numbers else label
+
+
+def _model_guidance(model: str = MODEL) -> str:
+    """Tell Mykola which Claude he is (#63).
+
+    He already admits to being Claude (#48), but without this he hedges on the
+    version — reasonably, since nothing in the conversation tells him — and a
+    learner who asks gets a small essay about not being able to see his own
+    machinery. Generated like the age guidance rather than written into
+    SYSTEM_PROMPT so the two can never disagree.
+    """
+    return (
+        "Model version:\n"
+        f"- The model answering as you is {_model_label(model)}. If a learner "
+        "asks which Claude you are, or which version, name it plainly — you "
+        "have been told, so do not say you cannot tell from where you sit.\n"
+        "- You know the name, not the details behind it: do not guess at "
+        "training data, release dates, benchmarks, or how you compare with "
+        "other models. Say you do not know and return to the English."
+    )
+
+
 def _mykola_symbolic_age(today: datetime.date | None = None) -> int:
     """Return Mykola's symbolic age as of `today`."""
     today = today or datetime.date.today()
@@ -297,7 +333,9 @@ def _stable_system() -> str:
     the calendar day, not the clock, so it is constant for far longer than the
     five-minute cache lifetime. A new day simply writes a new entry.
     """
-    return SYSTEM_PROMPT + "\n\n" + _mykola_age_guidance()
+    return "\n\n".join(
+        [SYSTEM_PROMPT, _mykola_age_guidance(), _model_guidance()]
+    )
 
 
 def _personalization(user_name=None, hidden_languages=None) -> str:

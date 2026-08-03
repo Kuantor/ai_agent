@@ -68,6 +68,13 @@ symbolic birthday drives his "age" answers.
 - **A refusal is an HTTP 200**, `stop_reason == "refusal"` with no text. Both
   call sites check for it: `answer()` substitutes `REFUSAL_REPLY` so the
   learner is not left with a blank message, `recap()` returns `""`.
+- **He is told which Claude he is.** `_model_guidance()` renders `MODEL`
+  through `_model_label()` (`claude-opus-5` → "Claude Opus 5") into the prompt,
+  so changing the constant changes what he answers — he can never name a model
+  he is not running on. Without it he hedges: he knows he is Claude (#48) but
+  nothing in a conversation tells him the version, so he says he cannot tell.
+  The same block forbids guessing at training dates, benchmarks, or
+  comparisons, which he equally cannot see.
 
 The system prompt is built in three pieces so it can be **prompt-cached**:
 `_stable_system()` (shared by everyone — the cached prefix),

@@ -10,8 +10,9 @@ the cache breakpoint. Both are things a later edit can quietly undo without
 any test failing anywhere else.
 """
 
-from agent import (MODEL, REFUSAL_REPLY, MykolaAgent, _personalization,
-                   _personalized_system, _stable_system, _system_blocks)
+from agent import (MODEL, REFUSAL_REPLY, MykolaAgent, _model_label,
+                   _personalization, _personalized_system, _stable_system,
+                   _system_blocks)
 
 
 class _TextBlock:
@@ -86,6 +87,16 @@ def _agent(message):
 def main() -> None:
     # --- the model -------------------------------------------------------
     assert MODEL == "claude-opus-5", MODEL
+
+    # --- Mykola knows which Claude he is (#63) ---------------------------
+    assert _model_label("claude-opus-5") == "Claude Opus 5"
+    assert _model_label("claude-opus-4-8") == "Claude Opus 4.8"
+    assert _model_label("claude-haiku-4-5-20251001") == "Claude Haiku 4.5", \
+        "a dated snapshot id carries a stamp nobody says aloud"
+    # The point of deriving the label: swapping MODEL must swap what he says,
+    # so he can never name a model he is not running on.
+    assert _model_label() in _stable_system(), \
+        "the running model's name must reach the prompt"
 
     # --- the prompt splits without changing ------------------------------
     # The one-string form is what the CLI and the persona tests read, so the
