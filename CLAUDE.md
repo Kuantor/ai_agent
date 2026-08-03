@@ -55,12 +55,45 @@ add new capability as optional kwargs, don't break the signatures above.
 Mykola knows he is **Claude-powered** and admits it in character (#48); a
 symbolic birthday drives his "age" answers.
 
+## The model and the system prompt (#63/#64)
+
+`MODEL = "claude-opus-5"`. Two things about it are easy to get wrong:
+
+- **Thinking is on when you omit the parameter.** On Opus 4.8 omitting it
+  meant *no* thinking. `answer()` asks for `{"type": "adaptive"}` and always
+  did; `recap()` passes `{"type": "disabled"}` **on purpose** — its
+  `max_tokens` is 1024 and that ceiling covers thinking and text together, so
+  a thinking recap can come back truncated or empty, and an empty recap is
+  silently dropped by the site.
+- **A refusal is an HTTP 200**, `stop_reason == "refusal"` with no text. Both
+  call sites check for it: `answer()` substitutes `REFUSAL_REPLY` so the
+  learner is not left with a blank message, `recap()` returns `""`.
+- **He is told which Claude he is.** `_model_guidance()` renders `MODEL`
+  through `_model_label()` (`claude-opus-5` → "Claude Opus 5") into the prompt,
+  so changing the constant changes what he answers — he can never name a model
+  he is not running on. Without it he hedges: he knows he is Claude (#48) but
+  nothing in a conversation tells him the version, so he says he cannot tell.
+  The same block forbids guessing at training dates, benchmarks, or
+  comparisons, which he equally cannot see.
+
+The system prompt is built in three pieces so it can be **prompt-cached**:
+`_stable_system()` (shared by everyone — the cached prefix),
+`_personalization()` (name and hidden languages — must stay *after* the
+breakpoint), and `_system_blocks(..., cache=True)` which assembles them.
+`_personalized_system()` still returns the whole thing as one string for the
+CLI and the tests. Caching is on for `answer()` only: a cached prefix costs
+1.25× to write and 0.1× to read, so it pays off across the turns of a chat but
+not for a one-shot recap. **Anything you add before the breakpoint must render
+identically across a conversation** — check `usage.cache_read_input_tokens` is
+non-zero on the second message if you touch it.
+
 ## Run & test
 
 ```bash
 python agent.py                 # interactive CLI
 python test_agent_prompt.py     # persona / prompt / knowledge-base checks
 python test_preferred_name.py   # the set_preferred_name tool (#62)
+python test_model_and_caching.py  # thinking mode, cache breakpoint, refusals
 python test_rag.py
 ```
 

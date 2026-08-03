@@ -30,13 +30,57 @@ from rag import KnowledgeBase
 
 load_dotenv(Path(__file__).with_name(".env"))
 
-MODEL = "claude-opus-4-8"
+MODEL = "claude-opus-5"
 MAX_TOKENS = 8192
 TOP_K = 3
 MAX_TOOL_ROUNDS = 5  # safety cap on tool-use iterations within one answer
 RECAP_MAX_CONTEXT_CHARS = 12000  # most recent past-log text fed into a recap
 RECAP_MAX_TOKENS = 1024
 MYKOLA_SYMBOLIC_BIRTHDATE = datetime.date(1981, 12, 13)
+
+# Opus 5's safety classifiers can decline a request with a successful HTTP 200
+# carrying stop_reason "refusal" and no text. Left alone that reaches the
+# learner as a blank reply; Mykola says something instead, in his own voice.
+REFUSAL_REPLY = (
+    "I would rather not go down that particular road, if you will forgive me. "
+    "Shall we return to your English?"
+)
+
+
+def _model_label(model: str = MODEL) -> str:
+    """A model id as a person would say it: claude-opus-5 -> "Claude Opus 5".
+
+    Derived rather than written out so Mykola cannot end up naming a model he
+    is not running on — changing MODEL changes what he says about himself.
+    """
+    parts = [p for p in model.split("-") if p]
+    if parts and parts[0].lower() == "claude":
+        parts = parts[1:]
+    # A dated snapshot id (…-4-5-20251001) carries a stamp nobody says aloud.
+    numbers = [p for p in parts if p.isdigit() and len(p) <= 2]
+    words = [p.capitalize() for p in parts if not p.isdigit()]
+    label = " ".join(["Claude"] + words)
+    return f"{label} {'.'.join(numbers)}" if numbers else label
+
+
+def _model_guidance(model: str = MODEL) -> str:
+    """Tell Mykola which Claude he is (#63).
+
+    He already admits to being Claude (#48), but without this he hedges on the
+    version — reasonably, since nothing in the conversation tells him — and a
+    learner who asks gets a small essay about not being able to see his own
+    machinery. Generated like the age guidance rather than written into
+    SYSTEM_PROMPT so the two can never disagree.
+    """
+    return (
+        "Model version:\n"
+        f"- The model answering as you is {_model_label(model)}. If a learner "
+        "asks which Claude you are, or which version, name it plainly — you "
+        "have been told, so do not say you cannot tell from where you sit.\n"
+        "- You know the name, not the details behind it: do not guess at "
+        "training data, release dates, benchmarks, or how you compare with "
+        "other models. Say you do not know and return to the English."
+    )
 
 
 def _mykola_symbolic_age(today: datetime.date | None = None) -> int:
@@ -280,17 +324,36 @@ What to call the learner:
 HIDEABLE_LANGUAGES = ("Ukrainian", "Russian")
 
 
-def _personalized_system(user_name=None, hidden_languages=None) -> str:
-    """SYSTEM_PROMPT, optionally personalized to address the visitor by name
-    and/or told which translation languages the visitor has hidden on the
-    site (kuantorflow#46/#79)."""
-    base = SYSTEM_PROMPT + "\n\n" + _mykola_age_guidance()
+def _stable_system() -> str:
+    """The part of the system prompt that is the same for every visitor.
+
+    This is the cached prefix (issue #64), so it must render byte-identically
+    across the requests of one conversation. `_mykola_age_guidance()` is
+    date-derived, which is the classic silent cache invalidator — but it names
+    the calendar day, not the clock, so it is constant for far longer than the
+    five-minute cache lifetime. A new day simply writes a new entry.
+    """
+    return "\n\n".join(
+        [SYSTEM_PROMPT, _mykola_age_guidance(), _model_guidance()]
+    )
+
+
+def _personalization(user_name=None, hidden_languages=None) -> str:
+    """The per-visitor tail of the system prompt: which translation languages
+    they have hidden on the site (kuantorflow#46/#79) and what to call them
+    (#62). Empty when there is nothing to say.
+
+    Kept separate from `_stable_system()` so it can sit *after* the cache
+    breakpoint — text that differs per visitor cannot be part of a shared
+    prefix without invalidating it for everyone else.
+    """
+    parts = []
 
     hidden = [l for l in (hidden_languages or []) if l in HIDEABLE_LANGUAGES]
     if hidden:
         names = " and ".join(hidden)
-        base += (
-            f"\n\nThe learner has turned off {names} translations in their site "
+        parts.append(
+            f"The learner has turned off {names} translations in their site "
             f"settings. Do not write {names} translations of words or phrases "
             "in your answers, and do not offer them — unless the learner "
             "explicitly asks for one in the conversation, which always takes "
@@ -299,23 +362,49 @@ def _personalized_system(user_name=None, hidden_languages=None) -> str:
             "translations from view, it does not remove them from saved cards."
         )
 
-    if not user_name:
-        return base
     # Used whole rather than truncated to the first token (issue #62). The
     # caller has already decided what to call this person — kuantorflow#148
     # keeps a given name intact ("Anna Maria" stays "Anna Maria"), and #62 lets
     # the learner choose outright — so taking one token here would overrule
     # both. Injection safety comes from collapsing whitespace and capping the
     # length, which is what actually stops a multi-line instruction.
-    name = clean_preferred_name(user_name)
-    if not name:
-        return base
-    return (
-        base
-        + f"\n\nThe person you are talking to is called {name}. Address them by "
-        "their first name naturally and warmly from time to time — not in every "
-        "message, and never robotically."
-    )
+    name = clean_preferred_name(user_name) if user_name else ""
+    if name:
+        parts.append(
+            f"The person you are talking to is called {name}. Address them by "
+            "their first name naturally and warmly from time to time — not in "
+            "every message, and never robotically."
+        )
+
+    return "\n\n".join(parts)
+
+
+def _personalized_system(user_name=None, hidden_languages=None) -> str:
+    """SYSTEM_PROMPT, optionally personalized to address the visitor by name
+    and/or told which translation languages the visitor has hidden on the
+    site (kuantorflow#46/#79). The whole prompt as one string."""
+    base = _stable_system()
+    extra = _personalization(user_name, hidden_languages)
+    return f"{base}\n\n{extra}" if extra else base
+
+
+def _system_blocks(user_name=None, hidden_languages=None, cache=False) -> list:
+    """The same prompt as API content blocks, split at the personalization
+    boundary so `cache_control` can mark the shared prefix (issue #64).
+
+    `cache` is off by default because a cached prefix only pays for itself
+    when it is read back: the write costs 1.25× and a read 0.1×, so a prompt
+    sent once is a small pure loss. Chat turns re-send it; a welcome-back
+    recap does not.
+    """
+    stable = {"type": "text", "text": _stable_system()}
+    if cache:
+        stable["cache_control"] = {"type": "ephemeral"}
+    blocks = [stable]
+    extra = _personalization(user_name, hidden_languages)
+    if extra:
+        blocks.append({"type": "text", "text": extra})
+    return blocks
 
 
 def describe_gap(hours) -> str:
@@ -500,9 +589,19 @@ class MykolaAgent:
         message = self.client.messages.create(
             model=MODEL,
             max_tokens=RECAP_MAX_TOKENS,
+            # Opus 5 thinks by default where Opus 4.8 did not, and RECAP_MAX_TOKENS
+            # is a ceiling on thinking *and* text together — a recap that thought
+            # could come back truncated or empty, which the site silently drops.
+            # Keeping thinking off preserves the behaviour the wording was tuned
+            # against; permitted because the default effort is "high" (issue #63).
+            thinking={"type": "disabled"},
             system=_personalized_system(user_name, hidden_languages),
             messages=[{"role": "user", "content": prompt}],
         )
+        if message.stop_reason == "refusal":
+            # A refused recap is simply no recap — the caller already treats ""
+            # that way, and there is no learner question here to answer instead.
+            return ""
         return "".join(
             block.text for block in message.content if block.type == "text"
         ).strip()
@@ -546,7 +645,10 @@ class MykolaAgent:
                 model=MODEL,
                 max_tokens=MAX_TOKENS,
                 thinking={"type": "adaptive"},
-                system=_personalized_system(user_name, hidden_languages),
+                # Cached prefix: tools and the shared part of the system prompt
+                # (issue #64). Every turn of a conversation re-sends them, so
+                # the 1.25× write is repaid on the second message.
+                system=_system_blocks(user_name, hidden_languages, cache=True),
                 tools=TOOLS,
                 messages=convo,
             ) as stream:
@@ -555,6 +657,11 @@ class MykolaAgent:
                     if on_text:
                         on_text(text)
                 message = stream.get_final_message()
+
+            if message.stop_reason == "refusal" and not response_text.strip():
+                response_text = REFUSAL_REPLY
+                if on_text:
+                    on_text(REFUSAL_REPLY)
 
             if message.stop_reason != "tool_use":
                 break

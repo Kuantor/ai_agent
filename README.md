@@ -9,7 +9,7 @@ Claude (Anthropic API) as the language model.
 ```
 question ──> retrieval (TF-IDF over knowledge/*.md) ──> top-3 chunks
                                                             │
-                    Claude (claude-opus-4-8) <── question + <context>
+                    Claude (claude-opus-5) <── question + <context>
                           │
                        answer (streamed)
 ```
