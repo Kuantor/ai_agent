@@ -19,6 +19,7 @@ Run the CLI:  python agent.py   (needs ANTHROPIC_API_KEY in .env)
 import datetime
 import email.utils as eut
 import json
+import logging
 import sys
 import time
 from pathlib import Path
@@ -515,6 +516,85 @@ def _system_blocks(user_name=None, hidden_languages=None, cache=False) -> list:
     return blocks
 
 
+_usage_log = logging.getLogger("mykola.usage")
+
+
+def _log_usage(message) -> None:
+    """One line per model call: what it cost and what the cache did (#71).
+
+    Caching fails *silently*. A stray byte in the prefix invalidates it and the
+    only symptom is a larger bill — no error, no warning, and behaviour
+    identical to having no cache at all. `cache_read` staying at zero across a
+    conversation is the failure signal, and without this line there is nothing
+    to look at.
+
+    It also replaces guesswork: the savings this change was justified on were
+    modelled from assumed reply and thinking lengths, and these are the real
+    numbers.
+
+    Never raises — a logging problem must not cost the learner an answer.
+    """
+    try:
+        u = getattr(message, "usage", None)
+        if u is None:
+            return
+        _usage_log.info(
+            "in=%s out=%s cache_write=%s cache_read=%s stop=%s",
+            getattr(u, "input_tokens", None),
+            getattr(u, "output_tokens", None),
+            getattr(u, "cache_creation_input_tokens", None),
+            getattr(u, "cache_read_input_tokens", None),
+            getattr(message, "stop_reason", None),
+        )
+    except Exception:
+        pass
+
+
+def _cache_conversation(convo: list) -> list:
+    """Mark the end of the conversation as a cache breakpoint (#71).
+
+    #64 cached the system prompt and tools — the part that never changes. This
+    caches the part that does. The Messages API is stateless, so every turn
+    re-sends the whole conversation; without a breakpoint here all of it is
+    billed at full price again, every time, and the cost of a chat grows with
+    the square of its length.
+
+    The marker has to sit on a content *block*, and a message's content is
+    usually a plain string, so the last message is rewritten into block form.
+    A copy: the caller's `history` belongs to the widget and goes back to the
+    browser, and `cache_control` has no business travelling with it.
+
+    Marking the **last** message means each request reads everything before it
+    from cache — the breakpoint moves forward as the conversation grows, and
+    each turn's read covers every turn before it.
+    """
+    if not convo:
+        return convo
+
+    convo = list(convo)
+    last = dict(convo[-1])
+    content = last.get("content")
+
+    if isinstance(content, str):
+        blocks = [{"type": "text", "text": content}]
+    elif isinstance(content, list):
+        blocks = [dict(b) if isinstance(b, dict) else b for b in content]
+    else:
+        return convo                    # nothing sensible to mark
+
+    # A block the SDK returned (a ToolUseBlock, say) is not a dict and cannot
+    # take the marker; leaving the turn unmarked costs a cache read, which is
+    # a great deal better than a 400 on a malformed block.
+    if not blocks or not isinstance(blocks[-1], dict):
+        return convo
+
+    blocks[-1] = dict(blocks[-1])
+    blocks[-1]["cache_control"] = {"type": "ephemeral"}
+    last["content"] = blocks
+    convo[-1] = last
+    return convo
+
+
 def describe_gap(hours) -> str:
     """A human phrase for a break of `hours`: 'about 5 hours', 'about 2 days'
     (issue #54). Mykola is told how long the learner was away in words, not
@@ -882,13 +962,18 @@ class MykolaAgent:
                 # the 1.25× write is repaid on the second message.
                 system=_system_blocks(user_name, hidden_languages, cache=True),
                 tools=TOOLS,
-                messages=convo,
+                # ...and the conversation itself (#71). Without this the
+                # history is the one part of the request that grows and the
+                # one part still billed at full price on every turn.
+                messages=_cache_conversation(convo),
             ) as stream:
                 for text in stream.text_stream:
                     response_text += text
                     if on_text:
                         on_text(text)
                 message = stream.get_final_message()
+
+            _log_usage(message)
 
             if message.stop_reason == "refusal" and not response_text.strip():
                 response_text = REFUSAL_REPLY
