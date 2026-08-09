@@ -140,29 +140,21 @@ ADD_FLASHCARD_TOOL = {
 # Only these keys ever reach the card saver.
 CARD_FIELDS = tuple(ADD_FLASHCARD_TOOL["input_schema"]["properties"].keys())
 
-# How much of the deck one read may put into the conversation (#68).
-#
-# A tool result is appended to `messages`, and `messages` is re-sent in full on
-# every later turn — so an unbounded read is not a one-off cost, it is a tax on
-# the whole rest of the chat. Twenty cards is more than a conversation about a
-# topic ever uses, and the largest topic in production holds 33.
-DEFAULT_CARDS_PER_READ = 20
-MAX_CARDS_PER_READ = 50
+# A ceiling on one read (#73). Not a page size — a word list is small enough
+# that a topic is normally returned whole, and this exists so a future topic of
+# three hundred words cannot end the conversation on its own.
+MAX_WORDS_PER_READ = 200
 
-# What a read returns by default: the word, what part of speech it is, and what
-# it means in English. That is what a conversation *in English* runs on.
+# What one card carries when it is actually fetched (#73).
 #
-# `examples_en` is deliberately absent — a JSON list and the largest field on a
-# card, so a page of them would outweigh everything else put together, and
-# Mykola can write his own example sentences.
+# No translations, by any route: Mykola is a native English speaker and does
+# not need a card to tell him what a word means in Ukrainian. "Is my card's
+# translation right?" is a real question and it belongs to the site's
+# look-up-and-update flow, not to a chat tool.
+#
+# `examples_en` is absent for the older reason — the largest field on a card,
+# and he can write his own example sentences.
 READ_CARD_FIELDS = ("word", "pos", "explanation_en")
-
-# Translations are fetched only when asked for. The learner is here to work in
-# English, and handing the model the translation of every word invites it to
-# lean on them — and doubles the payload on a page that is re-sent every turn.
-# So they arrive on request, when the learner asks what something is in their
-# own language, and not before.
-TRANSLATION_FIELDS = ("translation_ukr", "translation_rus")
 
 # What to call the learner (issue #62). Written through an injected
 # `name_saver` — kuantorflow stores it in users.preferred_name — for the same
@@ -207,22 +199,23 @@ LIST_TOPICS_TOOL = {
         "routines\", \"quiz me on work\", \"what do I have on health?\" — and "
         "whenever they ask what is in the deck at all. Their words will rarely "
         "be a topic's exact name: read the list and pick the topic that "
-        "matches what they meant, then fetch it with get_flashcards. Call this "
+        "matches what they meant, then fetch its words with list_words. Call this "
         "first if you are not certain a topic name is exact."
     ),
     "input_schema": {"type": "object", "properties": {}, "required": []},
 }
 
-GET_FLASHCARDS_TOOL = {
-    "name": "get_flashcards",
+LIST_WORDS_TOOL = {
+    "name": "list_words",
     "description": (
-        "Fetch the cards in one topic of the KuantorFlow deck, so you can talk "
-        "about the learner's own words rather than words you chose. Call this "
-        "once you know which topic they mean — from list_topics, or because "
-        "they named it exactly. `topic` must be a topic name as list_topics "
-        "spells it; if it does not match, this returns the available names and "
-        "you should pick from them and call again. Returns a limited page of "
-        "cards: check `withheld` and ask for more only if you need them."
+        "List the words and expressions in one topic of the KuantorFlow deck — "
+        "just the words themselves. Call this once you know which topic the "
+        "learner means, from list_topics or because they named it exactly. "
+        "This is the tool for talking *about* a topic: you know what these "
+        "words mean, so a list of them is all you need to open a conversation, "
+        "suggest what to practise, or see what they are studying. `topic` must "
+        "be spelled as list_topics spells it; if it does not match, this "
+        "returns the available names so you can pick one and call again."
     ),
     "input_schema": {
         "type": "object",
@@ -231,34 +224,43 @@ GET_FLASHCARDS_TOOL = {
                 "type": "string",
                 "description": "Topic name, spelled as list_topics returns it",
             },
-            "limit": {
-                "type": "integer",
-                "description": (
-                    f"How many cards to return, 1 to {MAX_CARDS_PER_READ}. "
-                    f"Defaults to {DEFAULT_CARDS_PER_READ}, which is plenty "
-                    "for a conversation about a topic."
-                ),
-            },
-            "include_translations": {
-                "type": "boolean",
-                "description": (
-                    "Also return each card's Ukrainian and Russian "
-                    "translations. Leave this out by default — the learner is "
-                    "here to work in English, and the English explanation is "
-                    "what you should be talking from. Set it to true only "
-                    "when they actually ask what a word is in their own "
-                    "language, or ask you to check or compare a translation. "
-                    "A language they have hidden in Settings is never "
-                    "returned even when this is true."
-                ),
-            },
         },
         "required": ["topic"],
     },
 }
 
+GET_CARD_TOOL = {
+    "name": "get_card",
+    "description": (
+        "Fetch what one word's card actually says — its part of speech and the "
+        "English explanation stored on it. Call this when a specific word "
+        "comes up and what matters is **the learner's own card**, not your "
+        "knowledge of the word: they ask what their card says, whether it is "
+        "any good, or you want to check it before commenting on it. You "
+        "already know English; do not call this merely to find out what a word "
+        "means. Some cards have no explanation at all and some have a poor "
+        "one — that is worth telling the learner, and you can only see it by "
+        "looking. A word filed under more than one part of speech comes back "
+        "as more than one card."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "topic": {
+                "type": "string",
+                "description": "The topic the word is filed under",
+            },
+            "word": {
+                "type": "string",
+                "description": "The word or expression, as list_words returned it",
+            },
+        },
+        "required": ["topic", "word"],
+    },
+}
+
 TOOLS = [ADD_FLASHCARD_TOOL, SET_PREFERRED_NAME_TOOL,
-         LIST_TOPICS_TOOL, GET_FLASHCARDS_TOOL]
+         LIST_TOPICS_TOOL, LIST_WORDS_TOOL, GET_CARD_TOOL]
 
 # A preferred name is stored, then fed back into the system prompt, so it is
 # hostile input: "call me: ignore your previous instructions and …". Collapsing
@@ -384,21 +386,23 @@ Database Features:
   - "let's talk about [subject]", "quiz me on [subject]", "cards about [subject]"
     → call list_topics, choose the topic that matches what they meant — their
     words will rarely be a topic's exact name, and picking the right one is your
-    job, not theirs — then call get_flashcards on it and build the conversation
-    from their own words. If get_flashcards answers with `unknown_topic`, choose
-    from the `available_topics` it gives you and call it again; do not tell the
-    learner you could not find it until you have tried the names it offered.
-  - A read gives you each card's word, its part of speech and its English
-    explanation — not its translations. That is deliberate: the learner is here
-    to work in English, and the English explanation is what you should teach
-    from. Only when they ask what a word is in their own language, or ask you to
-    check a translation, call get_flashcards again with include_translations.
-  - A read returns a limited page. If `withheld` is above zero there are more
-    cards than you were given: work with what you have and say so if it matters,
-    rather than implying you have seen the whole topic.
-  - Some cards have no English explanation at all — they arrive with a word and
-    nothing else. Say what you can about the word yourself rather than pretending
-    the card explained it.
+    job, not theirs — then call list_words on it and build the conversation from
+    their own words. If it answers with `unknown_topic`, choose from the
+    `available_topics` it gives you and call again; do not tell the learner you
+    could not find it until you have tried the names it offered.
+  - list_words gives you the words and nothing else, and that is nearly always
+    enough: you know English, so you can teach, quiz and converse from a list of
+    words without being told what they mean.
+  - get_card is for when what matters is **their card**, not the word — they ask
+    what their card says, or whether it is any good, or you are about to comment
+    on it. Do not reach for it merely to remind yourself what a word means.
+  - Some cards have no English explanation at all, and some have a thin or
+    partial one. If you have looked and found that, say so plainly and offer to
+    improve it — that is useful to them. Never imply a card explained something
+    when you have not read it.
+  - You cannot see translations at all, by design. If they ask whether a card's
+    Ukrainian or Russian is right, say you cannot see it from here and point
+    them at the card itself.
   - "add this word / save it as a flashcard / додай слово" → use the
     add_flashcard tool STRAIGHT AWAY. The request itself is the confirmation:
     do not ask "shall I add it?" first. Fill in every field you can determine
@@ -750,72 +754,109 @@ class MykolaAgent:
             })
         return json.dumps({"status": "ok", "topics": topics}, ensure_ascii=False)
 
-    def _run_get_flashcards(self, tool_input: dict) -> str:
-        """Execute the get_flashcards tool (#68).
+    def _rows_for_topic(self, topic: str):
+        """(rows, error_json) for one topic — the shared half of both readers.
 
-        An unknown topic answers with the available names rather than a bare
-        failure, so the model corrects itself on the next turn instead of
-        apologising to the learner. An error that carries its own fix is worth
-        more than one that is merely accurate.
+        `card_reader` is the only reader the host injects for cards, so both
+        tools go through it and differ in what they *serialise*. Filtering a
+        list in Python costs nothing that matters: the price of a read is what
+        ends up in the tool result and therefore in `messages`, not what
+        crosses a function call in this process.
+        """
+        try:
+            rows = list(self.card_reader(topic, MAX_WORDS_PER_READ) or [])
+        except Exception as e:
+            return None, json.dumps({"status": "error", "message": str(e)},
+                                    ensure_ascii=False)
+        if rows:
+            return rows, None
+
+        # An unknown topic answers with the names to choose from, so the model
+        # corrects itself next turn instead of apologising to the learner.
+        try:
+            known = [t.get("topic") for t in (self.topic_reader() or [])]
+        except Exception:
+            known = []
+        return None, json.dumps({
+            "status": "unknown_topic",
+            "message": f"No cards found under {topic!r}.",
+            "available_topics": [t for t in known if t],
+        }, ensure_ascii=False)
+
+    def _run_list_words(self, tool_input: dict) -> str:
+        """Execute the list_words tool (#73) — the words, and nothing else.
+
+        This is the read that happens on almost every conversation, so it is
+        the one that had to get cheap. A topic's worth of words is a few dozen
+        tokens where the same topic's cards were several hundred, and Mykola
+        does not need an explanation to tell a learner what they are studying:
+        he already knows English. The card itself is one call away when it
+        actually matters (get_card).
         """
         topic = str(tool_input.get("topic") or "").strip()
         if not topic:
             return json.dumps({"status": "error", "message": "topic is required"})
 
-        limit = tool_input.get("limit")
-        if not isinstance(limit, int) or isinstance(limit, bool):
-            limit = DEFAULT_CARDS_PER_READ
-        limit = max(1, min(limit, MAX_CARDS_PER_READ))
+        rows, failure = self._rows_for_topic(topic)
+        if failure:
+            return failure
 
-        try:
-            # One extra, so "is there more?" is answered without a second
-            # query and without trusting a count the reader didn't give us.
-            rows = list(self.card_reader(topic, limit + 1) or [])
-        except Exception as e:
-            return json.dumps({"status": "error", "message": str(e)},
-                              ensure_ascii=False)
+        seen, words = set(), []
+        for row in rows:
+            word = str(row.get("word") or "").strip()
+            # A word filed under two parts of speech is two cards (#228) and
+            # one word — the learner is studying `book`, not `book (noun)` and
+            # `book (verb)`. get_card is where that distinction reappears.
+            if word and word.lower() not in seen:
+                seen.add(word.lower())
+                words.append(word)
 
-        if not rows:
-            try:
-                known = [t.get("topic") for t in (self.topic_reader() or [])]
-            except Exception:
-                known = []
-            return json.dumps({
-                "status": "unknown_topic",
-                "message": f"No cards found under {topic!r}.",
-                "available_topics": [t for t in known if t],
-            }, ensure_ascii=False)
+        return json.dumps({"status": "ok", "topic": topic,
+                           "words": words, "total": len(words)},
+                          ensure_ascii=False)
 
-        # Translations only when the learner actually asked for one. Which
-        # languages may ever be seen is not this repo's call — the host strips
-        # a hidden one before the row gets here (#46/#79), so asking for
-        # translations can never surface a language the learner turned off.
-        wanted = READ_CARD_FIELDS
-        if tool_input.get("include_translations") is True:
-            wanted = wanted + TRANSLATION_FIELDS
+    def _run_get_card(self, tool_input: dict) -> str:
+        """Execute the get_card tool (#73) — what one card actually says.
 
-        withheld = max(0, len(rows) - limit)
+        Deliberately narrow. Mykola knows what `groggy` means; what he cannot
+        know is what the *learner's card* says about it, and that is worth
+        reading precisely when it might be wrong or missing — 74 of the 503
+        live cards carry no explanation, and some written before #221 carry a
+        partial one. Seeing that is what lets him offer to fix it rather than
+        quietly contradict it.
+        """
+        topic = str(tool_input.get("topic") or "").strip()
+        word = str(tool_input.get("word") or "").strip()
+        if not topic or not word:
+            return json.dumps({"status": "error",
+                               "message": "topic and word are both required"})
+
+        rows, failure = self._rows_for_topic(topic)
+        if failure:
+            return failure
+
         cards = []
-        for row in rows[:limit]:
+        for row in rows:
+            if str(row.get("word") or "").strip().lower() != word.lower():
+                continue
             card = {}
-            for field in wanted:
+            for field in READ_CARD_FIELDS:
                 value = row.get(field)
                 if isinstance(value, str):
                     value = value.strip()
                 if value:
                     card[field] = value
-            # A standalone FlashcardsDB row uses its own normalised names.
-            if not card.get("word") and row.get("word"):
-                card["word"] = row["word"]
             if card:
                 cards.append(card)
 
-        return json.dumps({
-            "status": "ok",
-            "topic": topic,
-            "cards": cards,
-            "withheld": withheld,
-        }, ensure_ascii=False)
+        if not cards:
+            return json.dumps({
+                "status": "unknown_word",
+                "message": f"No card for {word!r} in {topic!r}.",
+            }, ensure_ascii=False)
+
+        return json.dumps({"status": "ok", "topic": topic, "word": word,
+                           "cards": cards}, ensure_ascii=False)
 
     def _run_add_flashcard(self, tool_input: dict) -> str:
         """Execute the add_flashcard tool; always return a JSON string the
@@ -866,7 +907,8 @@ class MykolaAgent:
             ADD_FLASHCARD_TOOL["name"]: self._run_add_flashcard,
             SET_PREFERRED_NAME_TOOL["name"]: self._run_set_preferred_name,
             LIST_TOPICS_TOOL["name"]: self._run_list_topics,
-            GET_FLASHCARDS_TOOL["name"]: self._run_get_flashcards,
+            LIST_WORDS_TOOL["name"]: self._run_list_words,
+            GET_CARD_TOOL["name"]: self._run_get_card,
         }
         handler = handlers.get(name)
         if handler is None:
