@@ -521,6 +521,54 @@ def _system_blocks(user_name=None, hidden_languages=None, cache=False) -> list:
 
 
 _usage_log = logging.getLogger("mykola.usage")
+_tool_log = logging.getLogger("mykola.tools")
+
+# How many items each tool's result is counted by, for the log line below.
+_RESULT_COUNTS = {"topics": "topics", "words": "words", "cards": "cards"}
+
+
+def _log_tool_use(name: str, tool_input: dict, result: str) -> None:
+    """One line per tool call: what was asked for and what came back (#75).
+
+    **Logged here, and here only.** `_run_tool` is the single funnel every tool
+    passes through, and it is the only place that knows *which* tool ran —
+    `list_words` and `get_card` both reach the host through the same injected
+    `card_reader`, so from kuantorflow's side they are indistinguishable. The
+    interesting questions are all about which tool the model chose, so the data
+    only exists on this side of the seam.
+
+    **No identity is recorded, deliberately.** #163 says an anonymous visitor's
+    conversation is not written down; a line naming a topic and a count, with
+    nobody attached to it, is not that. And none of the questions this exists
+    to answer need to know who was asking: whether he lists a topic's words or
+    loops get_card over them, whether he uses get_card as a dictionary against
+    its own description, how often he guesses a topic name wrong and has to
+    recover. Those are questions about the model, not about the learner.
+
+    Never raises. A logging problem must not cost anyone an answer.
+    """
+    try:
+        fields = {}
+        for key in ("topic", "word"):
+            value = tool_input.get(key)
+            if value:
+                fields[key] = value
+        try:
+            parsed = json.loads(result)
+        except (TypeError, ValueError):
+            parsed = {}
+        if isinstance(parsed, dict):
+            fields["status"] = parsed.get("status")
+            for key, label in _RESULT_COUNTS.items():
+                if isinstance(parsed.get(key), list):
+                    fields[label] = len(parsed[key])
+        _tool_log.info(
+            "tool=%s %s", name,
+            " ".join(f"{k}={v!r}" if isinstance(v, str) else f"{k}={v}"
+                     for k, v in fields.items()),
+        )
+    except Exception:
+        pass
 
 
 def _log_usage(message) -> None:
@@ -914,7 +962,9 @@ class MykolaAgent:
         if handler is None:
             return json.dumps({"status": "error",
                                "message": f"unknown tool: {name}"})
-        return handler(tool_input)
+        result = handler(tool_input)
+        _log_tool_use(name, tool_input, result)
+        return result
 
     def recap(self, past_conversations: str, user_name=None,
               hidden_languages=None, away_hours=None) -> str:
