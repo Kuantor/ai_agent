@@ -148,12 +148,20 @@ CARD_FIELDS = tuple(ADD_FLASHCARD_TOOL["input_schema"]["properties"].keys())
 DEFAULT_CARDS_PER_READ = 20
 MAX_CARDS_PER_READ = 50
 
-# The fields a conversation actually needs. `examples_en` is deliberately
-# absent: it is a JSON list and the largest field on a card, so a page of them
-# would outweigh everything else here put together, and Mykola can write his own
-# example sentences — he cannot invent the learner's translations.
-READ_CARD_FIELDS = ("word", "pos", "explanation_en",
-                    "translation_ukr", "translation_rus")
+# What a read returns by default: the word, what part of speech it is, and what
+# it means in English. That is what a conversation *in English* runs on.
+#
+# `examples_en` is deliberately absent — a JSON list and the largest field on a
+# card, so a page of them would outweigh everything else put together, and
+# Mykola can write his own example sentences.
+READ_CARD_FIELDS = ("word", "pos", "explanation_en")
+
+# Translations are fetched only when asked for. The learner is here to work in
+# English, and handing the model the translation of every word invites it to
+# lean on them — and doubles the payload on a page that is re-sent every turn.
+# So they arrive on request, when the learner asks what something is in their
+# own language, and not before.
+TRANSLATION_FIELDS = ("translation_ukr", "translation_rus")
 
 # What to call the learner (issue #62). Written through an injected
 # `name_saver` — kuantorflow stores it in users.preferred_name — for the same
@@ -228,6 +236,19 @@ GET_FLASHCARDS_TOOL = {
                     f"How many cards to return, 1 to {MAX_CARDS_PER_READ}. "
                     f"Defaults to {DEFAULT_CARDS_PER_READ}, which is plenty "
                     "for a conversation about a topic."
+                ),
+            },
+            "include_translations": {
+                "type": "boolean",
+                "description": (
+                    "Also return each card's Ukrainian and Russian "
+                    "translations. Leave this out by default — the learner is "
+                    "here to work in English, and the English explanation is "
+                    "what you should be talking from. Set it to true only "
+                    "when they actually ask what a word is in their own "
+                    "language, or ask you to check or compare a translation. "
+                    "A language they have hidden in Settings is never "
+                    "returned even when this is true."
                 ),
             },
         },
@@ -366,9 +387,17 @@ Database Features:
     from their own words. If get_flashcards answers with `unknown_topic`, choose
     from the `available_topics` it gives you and call it again; do not tell the
     learner you could not find it until you have tried the names it offered.
+  - A read gives you each card's word, its part of speech and its English
+    explanation — not its translations. That is deliberate: the learner is here
+    to work in English, and the English explanation is what you should teach
+    from. Only when they ask what a word is in their own language, or ask you to
+    check a translation, call get_flashcards again with include_translations.
   - A read returns a limited page. If `withheld` is above zero there are more
     cards than you were given: work with what you have and say so if it matters,
     rather than implying you have seen the whole topic.
+  - Some cards have no English explanation at all — they arrive with a word and
+    nothing else. Say what you can about the word yourself rather than pretending
+    the card explained it.
   - "add this word / save it as a flashcard / додай слово" → use the
     add_flashcard tool STRAIGHT AWAY. The request itself is the confirmation:
     do not ask "shall I add it?" first. Fill in every field you can determine
@@ -677,11 +706,19 @@ class MykolaAgent:
                 "available_topics": [t for t in known if t],
             }, ensure_ascii=False)
 
+        # Translations only when the learner actually asked for one. Which
+        # languages may ever be seen is not this repo's call — the host strips
+        # a hidden one before the row gets here (#46/#79), so asking for
+        # translations can never surface a language the learner turned off.
+        wanted = READ_CARD_FIELDS
+        if tool_input.get("include_translations") is True:
+            wanted = wanted + TRANSLATION_FIELDS
+
         withheld = max(0, len(rows) - limit)
         cards = []
         for row in rows[:limit]:
             card = {}
-            for field in READ_CARD_FIELDS:
+            for field in wanted:
                 value = row.get(field)
                 if isinstance(value, str):
                     value = value.strip()

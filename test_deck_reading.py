@@ -73,14 +73,46 @@ check("a failing reader becomes an error status, never an exception",
 print("\nget_flashcards")
 out = json.loads(a._run_get_flashcards({"topic": "Daily life and routines"}))
 check("returns the topic's cards", out["status"] == "ok" and len(out["cards"]) == 2)
-check("keeps the fields a conversation needs",
+check("keeps the word, its part of speech and its English explanation",
       out["cards"][0]["word"] == "chore" and
-      out["cards"][0]["translation_ukr"] == "хатня робота")
+      out["cards"][0]["pos"] == "noun" and
+      out["cards"][0]["explanation_en"] == "a routine task")
 check("drops examples_en, the largest field on a card",
       all("examples_en" not in c for c in out["cards"]))
 check("omits fields the card does not have",
       "explanation_en" not in json.loads(
           a._run_get_flashcards({"topic": "Work and careers"}))["cards"][0])
+
+print("\ntranslations are opt-in")
+check("no translations by default",
+      all("translation_ukr" not in c and "translation_rus" not in c
+          for c in out["cards"]))
+
+asked = json.loads(a._run_get_flashcards(
+    {"topic": "Daily life and routines", "include_translations": True}))
+check("include_translations brings them back",
+      asked["cards"][0]["translation_ukr"] == "хатня робота" and
+      asked["cards"][0]["translation_rus"] == "домашнее дело")
+check("...and still no examples_en",
+      all("examples_en" not in c for c in asked["cards"]))
+
+for junk in ("yes", 1, None):
+    got = json.loads(a._run_get_flashcards(
+        {"topic": "Daily life and routines", "include_translations": junk}))
+    check(f"only a real true opts in (include_translations={junk!r})",
+          "translation_ukr" not in got["cards"][0])
+
+# The host strips a hidden language before the row reaches the agent, so
+# asking for translations cannot surface one the learner turned off (#46/#79).
+def ukrainian_hidden(topic, limit):
+    return [{k: v for k, v in card.items() if k != "translation_ukr"}
+            for card in DECK.get(topic, [])[:limit]]
+
+hidden = json.loads(Stub(topics, ukrainian_hidden)._run_get_flashcards(
+    {"topic": "Daily life and routines", "include_translations": True}))
+check("a hidden language never appears, even when translations are asked for",
+      "translation_ukr" not in hidden["cards"][0] and
+      hidden["cards"][0]["translation_rus"] == "домашнее дело")
 
 unknown = json.loads(a._run_get_flashcards({"topic": "daily routines"}))
 check("an unknown topic is not a bare failure",
