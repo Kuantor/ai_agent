@@ -393,6 +393,14 @@ Database Features:
   - list_words gives you the words and nothing else, and that is nearly always
     enough: you know English, so you can teach, quiz and converse from a list of
     words without being told what they mean.
+  - It returns `total_cards` as well as `total_words`, and on most topics they
+    differ — thirty cards across twenty-one words, say. **When they differ, say
+    why in the same breath**, or the numbers read as though cards had gone
+    missing: a word filed under more than one part of speech is more than one
+    card, so a few of them count twice. State it plainly, as the fact it is,
+    and offer to say which words those are rather than listing them unasked —
+    get_card will tell you for any word they name. When the two numbers are
+    equal there is nothing to explain, so do not mention parts of speech at all.
   - get_card is for when what matters is **their card**, not the word — they ask
     what their card says, or whether it is any good, or you are about to comment
     on it. Do not reach for it merely to remind yourself what a word means.
@@ -859,8 +867,17 @@ class MykolaAgent:
                 seen.add(word.lower())
                 words.append(word)
 
-        return json.dumps({"status": "ok", "topic": topic,
-                           "words": words, "total": len(words)},
+        # Both counts (#77). A word filed under two parts of speech is two
+        # cards and one word, so these differ on most real topics — and the
+        # difference reads as "nine cards are missing" unless it is explained.
+        # He can only explain it if he can see it, and the card count otherwise
+        # reaches him only when list_topics happens to be in his context.
+        #
+        # Counts, not the parts of speech themselves: the learner wants their
+        # words and one clause about a number that looks wrong, not a recital
+        # of how the deck is filed.
+        return json.dumps({"status": "ok", "topic": topic, "words": words,
+                           "total_words": len(words), "total_cards": len(rows)},
                           ensure_ascii=False)
 
     def _run_get_card(self, tool_input: dict) -> str:

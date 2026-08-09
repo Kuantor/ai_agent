@@ -49,6 +49,21 @@ def main() -> None:
     # Voice examples exist but must not be parroted.
     assert "never repeat these verbatim" in prompt, "Missing verbatim guard on examples"
 
+    # Issue #77: thirty cards across twenty-one words reads as though nine had
+    # gone missing, unless he says why in the same breath.
+    #
+    # Matched against a whitespace-collapsed copy: the prompt is hard-wrapped,
+    # so any phrase long enough to be worth asserting on spans a line break.
+    # Trimming each assertion until it stops straddling one would leave the
+    # test passing on fragments too short to mean anything.
+    flat = " ".join(prompt.split())
+    assert "total_cards" in flat and "total_words" in flat, \
+        "Missing the two counts list_words returns"
+    assert "a word filed under more than one part of speech is more than one card" \
+        in flat, "Missing the explanation for the card/word gap"
+    assert "when the two numbers are equal there is nothing to explain" in flat, \
+        "Missing the rule that an equal count needs no explanation"
+
     # Issue #48: Mykola must know he is Claude-powered and own up to being an AI.
     assert "claude" in prompt, "SYSTEM_PROMPT must mention Claude"
     assert "anthropic" in prompt, "SYSTEM_PROMPT must mention Anthropic"

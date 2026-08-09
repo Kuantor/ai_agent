@@ -83,8 +83,12 @@ check("no translations", "translation" not in json.dumps(out))
 check("no examples", "example" not in json.dumps(out))
 check("no parts of speech — the word is the unit here",
       "pos" not in json.dumps(out))
-check("a word filed twice appears once",
-      out["words"].count("book") == 1 and out["total"] == 4)
+check("a word filed twice appears once in the list",
+      out["words"].count("book") == 1 and out["total_words"] == 4)
+check("but the card count is reported too, so the gap can be explained (#77)",
+      out["total_cards"] == 5 and out["total_cards"] > out["total_words"])
+check("still no part-of-speech data in the list",
+      "pos" not in json.dumps(out))
 check("carries the words themselves",
       set(out["words"]) == {"chore", "commute", "errand", "book"})
 
