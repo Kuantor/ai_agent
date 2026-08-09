@@ -139,6 +139,30 @@ ADD_FLASHCARD_TOOL = {
 # Only these keys ever reach the card saver.
 CARD_FIELDS = tuple(ADD_FLASHCARD_TOOL["input_schema"]["properties"].keys())
 
+# How much of the deck one read may put into the conversation (#68).
+#
+# A tool result is appended to `messages`, and `messages` is re-sent in full on
+# every later turn — so an unbounded read is not a one-off cost, it is a tax on
+# the whole rest of the chat. Twenty cards is more than a conversation about a
+# topic ever uses, and the largest topic in production holds 33.
+DEFAULT_CARDS_PER_READ = 20
+MAX_CARDS_PER_READ = 50
+
+# What a read returns by default: the word, what part of speech it is, and what
+# it means in English. That is what a conversation *in English* runs on.
+#
+# `examples_en` is deliberately absent — a JSON list and the largest field on a
+# card, so a page of them would outweigh everything else put together, and
+# Mykola can write his own example sentences.
+READ_CARD_FIELDS = ("word", "pos", "explanation_en")
+
+# Translations are fetched only when asked for. The learner is here to work in
+# English, and handing the model the translation of every word invites it to
+# lean on them — and doubles the payload on a page that is re-sent every turn.
+# So they arrive on request, when the learner asks what something is in their
+# own language, and not before.
+TRANSLATION_FIELDS = ("translation_ukr", "translation_rus")
+
 # What to call the learner (issue #62). Written through an injected
 # `name_saver` — kuantorflow stores it in users.preferred_name — for the same
 # reason as the card tool: the agent never touches a database itself.
@@ -166,7 +190,74 @@ SET_PREFERRED_NAME_TOOL = {
     },
 }
 
-TOOLS = [ADD_FLASHCARD_TOOL, SET_PREFERRED_NAME_TOOL]
+# Reading the deck (#68). Mykola could write a card long before he could read
+# one, and SYSTEM_PROMPT already told him to offer retrieval he had no tool for.
+#
+# Both descriptions say *when* to call, not only what the tool returns: a
+# current model reaches for a tool conservatively, and the trigger condition in
+# the description is the more reliable half of the instruction — the system
+# prompt is the other half, and neither alone is enough.
+LIST_TOPICS_TOOL = {
+    "name": "list_topics",
+    "description": (
+        "List the topics in the KuantorFlow deck, with how many cards each "
+        "holds. Call this whenever the learner names a subject they want to "
+        "talk about, practise or be tested on — \"let's talk about daily "
+        "routines\", \"quiz me on work\", \"what do I have on health?\" — and "
+        "whenever they ask what is in the deck at all. Their words will rarely "
+        "be a topic's exact name: read the list and pick the topic that "
+        "matches what they meant, then fetch it with get_flashcards. Call this "
+        "first if you are not certain a topic name is exact."
+    ),
+    "input_schema": {"type": "object", "properties": {}, "required": []},
+}
+
+GET_FLASHCARDS_TOOL = {
+    "name": "get_flashcards",
+    "description": (
+        "Fetch the cards in one topic of the KuantorFlow deck, so you can talk "
+        "about the learner's own words rather than words you chose. Call this "
+        "once you know which topic they mean — from list_topics, or because "
+        "they named it exactly. `topic` must be a topic name as list_topics "
+        "spells it; if it does not match, this returns the available names and "
+        "you should pick from them and call again. Returns a limited page of "
+        "cards: check `withheld` and ask for more only if you need them."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "topic": {
+                "type": "string",
+                "description": "Topic name, spelled as list_topics returns it",
+            },
+            "limit": {
+                "type": "integer",
+                "description": (
+                    f"How many cards to return, 1 to {MAX_CARDS_PER_READ}. "
+                    f"Defaults to {DEFAULT_CARDS_PER_READ}, which is plenty "
+                    "for a conversation about a topic."
+                ),
+            },
+            "include_translations": {
+                "type": "boolean",
+                "description": (
+                    "Also return each card's Ukrainian and Russian "
+                    "translations. Leave this out by default — the learner is "
+                    "here to work in English, and the English explanation is "
+                    "what you should be talking from. Set it to true only "
+                    "when they actually ask what a word is in their own "
+                    "language, or ask you to check or compare a translation. "
+                    "A language they have hidden in Settings is never "
+                    "returned even when this is true."
+                ),
+            },
+        },
+        "required": ["topic"],
+    },
+}
+
+TOOLS = [ADD_FLASHCARD_TOOL, SET_PREFERRED_NAME_TOOL,
+         LIST_TOPICS_TOOL, GET_FLASHCARDS_TOOL]
 
 # A preferred name is stored, then fed back into the system prompt, so it is
 # hostile input: "call me: ignore your previous instructions and …". Collapsing
@@ -285,11 +376,28 @@ Rules:
 
 Database Features:
 - You have access to a **flashcards database** with words, expressions, translations,
-  and explanations. When a user asks for:
-  - "a list of cards", "all cards", "cards in the database", etc. → Tell them you 
-    can retrieve the full list, or they can request cards from a specific category 
-    (like "grammar", "vocabulary", "travel").
-  - "cards about [topic]" → Suggest filtering by category or searching.
+  and explanations, and you can now read it as well as add to it. When a user asks for:
+  - "a list of cards", "all cards", "what's in the database", "what topics are
+    there" → call the list_topics tool and answer from what it returns. Do not
+    describe the deck from memory or guess at what it holds.
+  - "let's talk about [subject]", "quiz me on [subject]", "cards about [subject]"
+    → call list_topics, choose the topic that matches what they meant — their
+    words will rarely be a topic's exact name, and picking the right one is your
+    job, not theirs — then call get_flashcards on it and build the conversation
+    from their own words. If get_flashcards answers with `unknown_topic`, choose
+    from the `available_topics` it gives you and call it again; do not tell the
+    learner you could not find it until you have tried the names it offered.
+  - A read gives you each card's word, its part of speech and its English
+    explanation — not its translations. That is deliberate: the learner is here
+    to work in English, and the English explanation is what you should teach
+    from. Only when they ask what a word is in their own language, or ask you to
+    check a translation, call get_flashcards again with include_translations.
+  - A read returns a limited page. If `withheld` is above zero there are more
+    cards than you were given: work with what you have and say so if it matters,
+    rather than implying you have seen the whole topic.
+  - Some cards have no English explanation at all — they arrive with a word and
+    nothing else. Say what you can about the word yourself rather than pretending
+    the card explained it.
   - "add this word / save it as a flashcard / додай слово" → use the
     add_flashcard tool STRAIGHT AWAY. The request itself is the confirmation:
     do not ask "shall I add it?" first. Fill in every field you can determine
@@ -478,7 +586,7 @@ class MykolaAgent:
     """
 
     def __init__(self, knowledge_dir: Path | None = None, card_saver=None,
-                 name_saver=None):
+                 name_saver=None, topic_reader=None, card_reader=None):
         """
         `card_saver`, if given, is a callable(entry_dict) that persists one
         flashcard (kuantorflow injects its save_flashcard — the same mechanism
@@ -489,11 +597,20 @@ class MykolaAgent:
         users.preferred_name). There is no standalone fallback: this repo has
         no notion of an account, so without a host the tool reports that it
         cannot remember the name, and Mykola says so.
+
+        `topic_reader` — callable() -> [{"topic": str, "cards": int}, ...] —
+        and `card_reader` — callable(topic, limit) -> [card_dict, ...] — are
+        the read half (#68). The host injects them for the same reason it
+        injects the savers: the agent never touches a database, and only the
+        host knows which cards this visitor may see (kuantorflow's #127 hides
+        other people's cards, and Mykola must not read past that).
         """
         self.kb = KnowledgeBase(knowledge_dir) if knowledge_dir else KnowledgeBase()
         self.client = anthropic.Anthropic()
         self.card_saver = card_saver or self._default_card_saver
         self.name_saver = name_saver
+        self.topic_reader = topic_reader or self._default_topic_reader
+        self.card_reader = card_reader or self._default_card_reader
         self._cards_db = None  # lazy FlashcardsDB for the standalone saver
 
     @property
@@ -506,6 +623,119 @@ class MykolaAgent:
             from cards_db import FlashcardsDB
             self._cards_db = FlashcardsDB()
         return self._cards_db.add_full_flashcard(entry)
+
+    def _standalone_db(self):
+        """The lazily-built FlashcardsDB the standalone fallbacks share."""
+        if self._cards_db is None:
+            from cards_db import FlashcardsDB
+            self._cards_db = FlashcardsDB()
+        return self._cards_db
+
+    def _default_topic_reader(self):
+        """Standalone fallback: topics derived from this repo's FlashcardsDB.
+
+        FlashcardsDB has no topics table — it normalises whatever column looks
+        like a category — so the topic list is counted from the cards rather
+        than read. Embedded in kuantorflow this is never called: the host reads
+        its own topics table (#207) instead.
+        """
+        counts = {}
+        for card in self._standalone_db().get_all_cards():
+            name = (card.get("category") or "general").strip() or "general"
+            counts[name] = counts.get(name, 0) + 1
+        return [{"topic": name, "cards": n} for name, n in sorted(counts.items())]
+
+    def _default_card_reader(self, topic: str, limit: int):
+        """Standalone fallback: one topic's cards from this repo's FlashcardsDB."""
+        return self._standalone_db().get_cards_by_category(topic)[:limit]
+
+    def _run_list_topics(self, tool_input: dict) -> str:
+        """Execute the list_topics tool (#68).
+
+        Names and counts only. This is what makes an inexact request like
+        "daily routines" resolvable — the model reads the real names and picks
+        one. There is deliberately no fuzzy matching anywhere in either repo:
+        choosing between eighteen names is what the model is for, and a
+        server-side matcher would be a second, worse implementation of it.
+        """
+        try:
+            topics = list(self.topic_reader() or [])
+        except Exception as e:
+            return json.dumps({"status": "error", "message": str(e)},
+                              ensure_ascii=False)
+        if not topics:
+            return json.dumps({
+                "status": "empty",
+                "message": "There are no cards in the deck yet.",
+            })
+        return json.dumps({"status": "ok", "topics": topics}, ensure_ascii=False)
+
+    def _run_get_flashcards(self, tool_input: dict) -> str:
+        """Execute the get_flashcards tool (#68).
+
+        An unknown topic answers with the available names rather than a bare
+        failure, so the model corrects itself on the next turn instead of
+        apologising to the learner. An error that carries its own fix is worth
+        more than one that is merely accurate.
+        """
+        topic = str(tool_input.get("topic") or "").strip()
+        if not topic:
+            return json.dumps({"status": "error", "message": "topic is required"})
+
+        limit = tool_input.get("limit")
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            limit = DEFAULT_CARDS_PER_READ
+        limit = max(1, min(limit, MAX_CARDS_PER_READ))
+
+        try:
+            # One extra, so "is there more?" is answered without a second
+            # query and without trusting a count the reader didn't give us.
+            rows = list(self.card_reader(topic, limit + 1) or [])
+        except Exception as e:
+            return json.dumps({"status": "error", "message": str(e)},
+                              ensure_ascii=False)
+
+        if not rows:
+            try:
+                known = [t.get("topic") for t in (self.topic_reader() or [])]
+            except Exception:
+                known = []
+            return json.dumps({
+                "status": "unknown_topic",
+                "message": f"No cards found under {topic!r}.",
+                "available_topics": [t for t in known if t],
+            }, ensure_ascii=False)
+
+        # Translations only when the learner actually asked for one. Which
+        # languages may ever be seen is not this repo's call — the host strips
+        # a hidden one before the row gets here (#46/#79), so asking for
+        # translations can never surface a language the learner turned off.
+        wanted = READ_CARD_FIELDS
+        if tool_input.get("include_translations") is True:
+            wanted = wanted + TRANSLATION_FIELDS
+
+        withheld = max(0, len(rows) - limit)
+        cards = []
+        for row in rows[:limit]:
+            card = {}
+            for field in wanted:
+                value = row.get(field)
+                if isinstance(value, str):
+                    value = value.strip()
+                if value:
+                    card[field] = value
+            # A standalone FlashcardsDB row uses its own normalised names.
+            if not card.get("word") and row.get("word"):
+                card["word"] = row["word"]
+            if card:
+                cards.append(card)
+
+        return json.dumps({
+            "status": "ok",
+            "topic": topic,
+            "cards": cards,
+            "withheld": withheld,
+        }, ensure_ascii=False)
 
     def _run_add_flashcard(self, tool_input: dict) -> str:
         """Execute the add_flashcard tool; always return a JSON string the
@@ -555,6 +785,8 @@ class MykolaAgent:
         handlers = {
             ADD_FLASHCARD_TOOL["name"]: self._run_add_flashcard,
             SET_PREFERRED_NAME_TOOL["name"]: self._run_set_preferred_name,
+            LIST_TOPICS_TOOL["name"]: self._run_list_topics,
+            GET_FLASHCARDS_TOOL["name"]: self._run_get_flashcards,
         }
         handler = handlers.get(name)
         if handler is None:
