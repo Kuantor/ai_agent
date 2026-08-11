@@ -10,9 +10,9 @@ the cache breakpoint. Both are things a later edit can quietly undo without
 any test failing anywhere else.
 """
 
-from agent import (MODEL, REFUSAL_REPLY, MykolaAgent, _model_label,
-                   _personalization, _personalized_system, _stable_system,
-                   _system_blocks)
+from agent import (FAST_BRIEF, FAST_EFFORT, MODEL, REFUSAL_REPLY, MykolaAgent,
+                   _model_label, _personalization, _personalized_system,
+                   _stable_system, _system_blocks)
 
 
 class _TextBlock:
@@ -164,6 +164,32 @@ def main() -> None:
     # A refusal after some text has already streamed keeps what was said.
     agent = _agent(_Message("Half an answer", stop_reason="refusal"))
     assert agent.answer("...")["response"] == "Half an answer"
+
+    # --- fast thinking (#50) ----------------------------------------------
+    # Two levers under one switch, because the wait has two halves: `effort`
+    # decides how long Claude deliberates before any text exists, and the note
+    # decides how much he then writes. Measured at 3.17s/7.04s without and
+    # 0.98s/1.98s with, and `effort` alone left the reply length untouched.
+    agent = _agent(_Message("Brief."))
+    agent.answer("hello", user_name="Anton", fast=True)
+    (call,) = agent.client.messages.calls
+    assert call["output_config"] == {"effort": FAST_EFFORT}
+    system = call["system"]
+    assert FAST_BRIEF in system[-1]["text"], "the brevity note is not sent"
+    assert "cache_control" not in system[-1],         "the note must not be a cache breakpoint of its own"
+    assert FAST_BRIEF not in system[0]["text"], (
+        "the note sits *after* the cached prefix — inside it, one learner "
+        "turning fast thinking on would give every other learner a different "
+        "prompt to cache")
+
+    # Off is the default, and it must send nothing at all rather than an
+    # explicit slow setting: an agent that never hears about effort keeps
+    # whatever the API's own default is.
+    agent = _agent(_Message("At length."))
+    agent.answer("hello")
+    (call,) = agent.client.messages.calls
+    assert "output_config" not in call
+    assert all(FAST_BRIEF not in b["text"] for b in call["system"])
 
     print("test_model_and_caching.py: all checks passed")
 
