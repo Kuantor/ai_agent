@@ -1029,15 +1029,49 @@ class MykolaAgent:
 
     def answer(self, question: str, history=None, on_text=None, user_name=None,
                hidden_languages=None) -> dict:
+        """Answer a question, returning the finished reply in one piece.
+
+        A thin drain of `stream_answer()` below, which is where the work now
+        happens — one implementation, so the CLI's live printing, the web
+        clients' single JSON reply and a streamed endpoint cannot drift apart.
+        The signature is unchanged, `on_text` included: every existing caller
+        keeps working without knowing this became a generator underneath.
         """
-        Answer a question with retrieval-augmented generation. The model may
+        result = {}
+        for kind, payload in self.stream_answer(
+                question, history, user_name=user_name,
+                hidden_languages=hidden_languages):
+            if kind == "text":
+                if on_text:
+                    on_text(payload)
+            else:
+                result = payload
+        return result
+
+    def stream_answer(self, question: str, history=None, user_name=None,
+                      hidden_languages=None):
+        """
+        Answer a question, **yielding the reply as it arrives**: `("text",
+        delta)` for each fragment the model produces, then exactly one
+        `("done", result)` carrying the dict `answer()` returns.
+
+        Two kinds of event rather than a bare run of deltas, because the text
+        is not all a caller needs: `sources`, `history` and `saved_cards` are
+        only known once the last round finishes, and a client that has already
+        streamed the words still has to be told what was saved. A caller that
+        renders deltas and ignores the rest would silently stop refreshing the
+        deck when Mykola saves a card (kuantorflow#50).
+
+        The deltas were always here — `client.messages.stream()` has produced
+        them since this method was written — but until now they were joined
+        into a string before anything outside this call could see one.
+
+        The model may
         call the add_flashcard tool mid-answer to save cards the user asked
         for; tool calls are executed here and the exchange continues until the
         model produces its final text.
 
         `history` is the prior [{"role", "content"}] messages (may be None).
-        `on_text`, if given, is called with each streamed text delta (used by
-        the CLI to print tokens live).
         `user_name`, if given, is the signed-in visitor's first name; Mykola is
         then asked to address them by it naturally during the conversation.
         `hidden_languages`, if given, lists translation languages the visitor
@@ -1078,16 +1112,14 @@ class MykolaAgent:
             ) as stream:
                 for text in stream.text_stream:
                     response_text += text
-                    if on_text:
-                        on_text(text)
+                    yield "text", text
                 message = stream.get_final_message()
 
             _log_usage(message)
 
             if message.stop_reason == "refusal" and not response_text.strip():
                 response_text = REFUSAL_REPLY
-                if on_text:
-                    on_text(REFUSAL_REPLY)
+                yield "text", REFUSAL_REPLY
 
             if message.stop_reason != "tool_use":
                 break
@@ -1115,7 +1147,7 @@ class MykolaAgent:
             {"file": c.source, "heading": c.heading, "score": round(c.score, 2)}
             for c in chunks
         ]
-        return {
+        yield "done", {
             "response": response_text,
             "sources": sources,
             "history": history,
