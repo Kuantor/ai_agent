@@ -509,7 +509,39 @@ def _personalized_system(user_name=None, hidden_languages=None) -> str:
     return f"{base}\n\n{extra}" if extra else base
 
 
-def _system_blocks(user_name=None, hidden_languages=None, cache=False) -> list:
+# --- fast thinking (#50) -----------------------------------------------------
+#
+# Two changes, one switch, because the wait has two halves and each needs its
+# own lever. Measured over six short questions, two runs each, against the real
+# API — medians, in seconds to the first word and to the last:
+#
+#     effort=high (the API default, what every turn ran at)  3.17  ->  7.04
+#     effort=medium                                          1.75  ->  5.65
+#     effort=medium + the note below                         0.98  ->  1.98
+#
+# `effort` buys the first half: it decides how long Claude deliberates before
+# any text exists, and nothing downstream can start until that ends. It does
+# **not** shorten the reply — 521 characters at high, 518 at medium — which is
+# why the note is the other half. Replies fell to about 60 characters with it,
+# and the total time with them.
+#
+# Medium rather than low: low measured no faster here (2.48s to the first word,
+# against medium's 1.75s — within the noise of twelve calls, but there is no
+# case for the lower setting on this evidence), and it is the cheaper of the two
+# in quality.
+FAST_EFFORT = "medium"
+
+FAST_BRIEF = (
+    "Keep this reply as short as the question deserves. A greeting, a thank-you "
+    "or an acknowledgement gets one short sentence and nothing else. A simple "
+    "question gets the answer first, in one or two sentences, with no preamble "
+    "and no restating of the question. Where an example earns its place, one is "
+    "plenty."
+)
+
+
+def _system_blocks(user_name=None, hidden_languages=None, cache=False,
+                   fast=False) -> list:
     """The same prompt as API content blocks, split at the personalization
     boundary so `cache_control` can mark the shared prefix (issue #64).
 
@@ -517,6 +549,11 @@ def _system_blocks(user_name=None, hidden_languages=None, cache=False) -> list:
     when it is read back: the write costs 1.25× and a read 0.1×, so a prompt
     sent once is a small pure loss. Chat turns re-send it; a welcome-back
     recap does not.
+
+    `fast` appends the brevity note (#50). **After the cached prefix, never
+    inside it**: one learner turning fast thinking on must not give every other
+    learner a different prompt to cache. The personalization block is after the
+    breakpoint for exactly the same reason, and this sits beside it.
     """
     stable = {"type": "text", "text": _stable_system()}
     if cache:
@@ -525,6 +562,8 @@ def _system_blocks(user_name=None, hidden_languages=None, cache=False) -> list:
     extra = _personalization(user_name, hidden_languages)
     if extra:
         blocks.append({"type": "text", "text": extra})
+    if fast:
+        blocks.append({"type": "text", "text": FAST_BRIEF})
     return blocks
 
 
@@ -579,8 +618,17 @@ def _log_tool_use(name: str, tool_input: dict, result: str) -> None:
         pass
 
 
-def _log_usage(message) -> None:
-    """One line per model call: what it cost and what the cache did (#71).
+def _log_usage(message, first_word=None, elapsed=None, fast=False) -> None:
+    """One line per model call: what it cost, what the cache did (#71), and
+    how long the learner waited (#50).
+
+    The timings are the point of the second half. Until now this line held
+    tokens and nothing else, so a slow answer could have been thinking, a long
+    reply, or a second model call for a tool, and there was no way to tell
+    which — every argument about latency was a guess. `first` is the wait
+    before any text existed, which is the only part a reader actually feels;
+    `total` includes writing it. `fast` records which setting produced them,
+    or the two populations are mixed in one log and neither is readable.
 
     Caching fails *silently*. A stray byte in the prefix invalidates it and the
     only symptom is a larger bill — no error, no warning, and behaviour
@@ -599,12 +647,16 @@ def _log_usage(message) -> None:
         if u is None:
             return
         _usage_log.info(
-            "in=%s out=%s cache_write=%s cache_read=%s stop=%s",
+            "in=%s out=%s cache_write=%s cache_read=%s stop=%s "
+            "first=%s total=%s fast=%s",
             getattr(u, "input_tokens", None),
             getattr(u, "output_tokens", None),
             getattr(u, "cache_creation_input_tokens", None),
             getattr(u, "cache_read_input_tokens", None),
             getattr(message, "stop_reason", None),
+            "-" if first_word is None else f"{first_word:.2f}",
+            "-" if elapsed is None else f"{elapsed:.2f}",
+            "yes" if fast else "no",
         )
     except Exception:
         pass
@@ -1028,7 +1080,7 @@ class MykolaAgent:
         ).strip()
 
     def answer(self, question: str, history=None, on_text=None, user_name=None,
-               hidden_languages=None) -> dict:
+               hidden_languages=None, fast=False) -> dict:
         """Answer a question, returning the finished reply in one piece.
 
         A thin drain of `stream_answer()` below, which is where the work now
@@ -1040,7 +1092,7 @@ class MykolaAgent:
         result = {}
         for kind, payload in self.stream_answer(
                 question, history, user_name=user_name,
-                hidden_languages=hidden_languages):
+                hidden_languages=hidden_languages, fast=fast):
             if kind == "text":
                 if on_text:
                     on_text(payload)
@@ -1049,7 +1101,7 @@ class MykolaAgent:
         return result
 
     def stream_answer(self, question: str, history=None, user_name=None,
-                      hidden_languages=None):
+                      hidden_languages=None, fast=False):
         """
         Answer a question, **yielding the reply as it arrives**: `("text",
         delta)` for each fragment the model produces, then exactly one
@@ -1095,15 +1147,20 @@ class MykolaAgent:
         response_text = ""
         saved_cards = []
 
+        started = time.monotonic()
+        first_word = None
         for _ in range(MAX_TOOL_ROUNDS):
+            extra = {"output_config": {"effort": FAST_EFFORT}} if fast else {}
             with self.client.messages.stream(
                 model=MODEL,
                 max_tokens=MAX_TOKENS,
                 thinking={"type": "adaptive"},
+                **extra,
                 # Cached prefix: tools and the shared part of the system prompt
                 # (issue #64). Every turn of a conversation re-sends them, so
                 # the 1.25× write is repaid on the second message.
-                system=_system_blocks(user_name, hidden_languages, cache=True),
+                system=_system_blocks(user_name, hidden_languages, cache=True,
+                                      fast=fast),
                 tools=TOOLS,
                 # ...and the conversation itself (#71). Without this the
                 # history is the one part of the request that grows and the
@@ -1111,11 +1168,14 @@ class MykolaAgent:
                 messages=_cache_conversation(convo),
             ) as stream:
                 for text in stream.text_stream:
+                    if first_word is None:
+                        first_word = time.monotonic() - started
                     response_text += text
                     yield "text", text
                 message = stream.get_final_message()
 
-            _log_usage(message)
+            _log_usage(message, first_word=first_word,
+                       elapsed=time.monotonic() - started, fast=fast)
 
             if message.stop_reason == "refusal" and not response_text.strip():
                 response_text = REFUSAL_REPLY
