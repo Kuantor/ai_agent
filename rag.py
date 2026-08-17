@@ -50,12 +50,34 @@ def _split_into_chunks(source: str, text: str) -> list[Chunk]:
 
 
 class KnowledgeBase:
-    """In-memory TF-IDF index over the knowledge/ folder."""
+    """In-memory TF-IDF index over the knowledge/ folder, plus any documents
+    the host hands in.
 
-    def __init__(self, knowledge_dir: Path = KNOWLEDGE_DIR):
+    `extra_docs` is a list of Markdown paths owned by somebody else —
+    KuantorFlow passes its own `docs/user-guide.md` (kuantorflow#310), so
+    Mykola can explain the site he lives in. They are **read, not copied**:
+    the guide is written and reviewed in the app's repo and ships to learners
+    as a PDF from there, and a second copy here would drift away from it. That
+    is not hypothetical — this repo's own `kuantorflow_faq.md` was exactly such
+    a copy, and by the time it was retired it was telling learners that anyone
+    could add cards, which stopped being true when accounts arrived.
+
+    A path that does not exist is skipped in silence. The host may be an older
+    or a differently-deployed checkout, and a missing document is a reason for
+    Mykola to know less, never a reason for the widget not to load.
+    """
+
+    def __init__(self, knowledge_dir: Path = KNOWLEDGE_DIR, extra_docs=None):
         self.chunks: list[Chunk] = []
         for path in sorted(knowledge_dir.glob("*.md")):
             text = path.read_text(encoding="utf-8")
+            self.chunks.extend(_split_into_chunks(path.name, text))
+        for doc in extra_docs or ():
+            path = Path(doc)
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
             self.chunks.extend(_split_into_chunks(path.name, text))
         if not self.chunks:
             raise RuntimeError(f"No knowledge documents found in {knowledge_dir}")

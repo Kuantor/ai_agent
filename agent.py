@@ -778,8 +778,17 @@ class MykolaAgent:
     """
 
     def __init__(self, knowledge_dir: Path | None = None, card_saver=None,
-                 name_saver=None, topic_reader=None, card_reader=None):
+                 name_saver=None, topic_reader=None, card_reader=None,
+                 knowledge_docs=None):
         """
+        `knowledge_docs` — Markdown files the host owns and wants Mykola to
+        know (kuantorflow#310). KuantorFlow passes its own user guide, which is
+        how he can explain the site's features: the guide is maintained there,
+        beside the app it describes, and read from there rather than copied
+        here. The same reasoning as the callables below — only the host knows
+        its own application — except this one is a document rather than a
+        function.
+
         `card_saver`, if given, is a callable(entry_dict) that persists one
         flashcard (kuantorflow injects its save_flashcard — the same mechanism
         as the Look up & save flow). Standalone, the FlashcardsDB is used.
@@ -797,7 +806,9 @@ class MykolaAgent:
         host knows which cards this visitor may see (kuantorflow's #127 hides
         other people's cards, and Mykola must not read past that).
         """
-        self.kb = KnowledgeBase(knowledge_dir) if knowledge_dir else KnowledgeBase()
+        self.kb = (KnowledgeBase(knowledge_dir, extra_docs=knowledge_docs)
+                   if knowledge_dir
+                   else KnowledgeBase(extra_docs=knowledge_docs))
         self.client = anthropic.Anthropic()
         self.card_saver = card_saver or self._default_card_saver
         self.name_saver = name_saver

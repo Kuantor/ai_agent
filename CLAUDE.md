@@ -41,6 +41,15 @@ KuantorFlow calls `MykolaAgent`:
   for `users.preferred_name` (#62), which has **no standalone fallback** —
   this repo has no notion of an account, so without a host the tool says it
   cannot remember the name.
+- `__init__(knowledge_docs=[…])` — Markdown the **host** owns, indexed beside
+  `knowledge/*.md` (kuantorflow#310). KuantorFlow passes its own
+  `docs/user-guide.md`, which is how Mykola can explain the site's features.
+  **This repo describes that app nowhere**, on purpose: it used to, in
+  `knowledge/kuantorflow_faq.md`, and that copy drifted until it was answering
+  "why can't I add cards?" from a description written before sign-in was
+  required to write at all. The app documents itself; we read what it gives us. A path that does not exist is
+  skipped in silence, so an older host is a reason for Mykola to know less and
+  never a reason for the widget to fail to load.
 
 **Adding a tool**: define it next to `ADD_FLASHCARD_TOOL`, add it to `TOOLS`,
 give it a `_run_…` handler returning a **JSON status string** (never raising —
