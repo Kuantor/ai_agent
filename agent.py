@@ -779,7 +779,7 @@ class MykolaAgent:
 
     def __init__(self, knowledge_dir: Path | None = None, card_saver=None,
                  name_saver=None, topic_reader=None, card_reader=None,
-                 knowledge_docs=None):
+                 knowledge_docs=None, default_topic: str | None = None):
         """
         `knowledge_docs` — Markdown files the host owns and wants Mykola to
         know (kuantorflow#310). KuantorFlow passes its own user guide, which is
@@ -788,6 +788,10 @@ class MykolaAgent:
         here. The same reasoning as the callables below — only the host knows
         its own application — except this one is a document rather than a
         function.
+
+        `default_topic` is the topic a card gets when the conversation named
+        none. The host passes its own (kuantorflow#414); omitted, it is
+        `general`, which is right for a standalone run.
 
         `card_saver`, if given, is a callable(entry_dict) that persists one
         flashcard (kuantorflow injects its save_flashcard — the same mechanism
@@ -811,6 +815,13 @@ class MykolaAgent:
                    else KnowledgeBase(extra_docs=knowledge_docs))
         self.client = anthropic.Anthropic()
         self.card_saver = card_saver or self._default_card_saver
+        # Where a card goes when the conversation named no topic. The host owns
+        # the deck, so the host owns this answer (kuantorflow#414): it renamed
+        # its catch-all topic and every card saved from chat kept going to the
+        # old name, because the name was a string typed in here. `general` stays
+        # the fallback for a standalone run against this repo's own database,
+        # where it is still the right one.
+        self.default_topic = default_topic or "general"
         self.name_saver = name_saver
         self.topic_reader = topic_reader or self._default_topic_reader
         self.card_reader = card_reader or self._default_card_reader
@@ -994,7 +1005,7 @@ class MykolaAgent:
             value = str(tool_input.get(field) or "").strip()
             if value:
                 entry[field] = value
-        entry.setdefault("topic", "general")
+        entry.setdefault("topic", self.default_topic)
         if not entry.get("word"):
             return json.dumps({"status": "error", "message": "word is required"})
         try:
