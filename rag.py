@@ -15,6 +15,11 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 KNOWLEDGE_DIR = Path(__file__).with_name("knowledge")
 
+# How many times a chunk's heading is repeated in the indexed text, so that
+# a question naming a section outranks the sections that merely mention it
+# (#82). Measured rather than picked -- see `KnowledgeBase.__init__`.
+HEADING_WEIGHT = 3
+
 
 @dataclass
 class Chunk:
@@ -82,8 +87,29 @@ class KnowledgeBase:
         if not self.chunks:
             raise RuntimeError(f"No knowledge documents found in {knowledge_dir}")
 
-        # Heading words matter for matching, so index them with the body.
-        corpus = [f"{c.heading}\n{c.text}" for c in self.chunks]
+        # Heading words matter for matching, and they matter **more** than
+        # the same words in a paragraph (#82). A heading is not prose: it is
+        # the label somebody chose to name a section, and a question that
+        # repeats it is almost always asking for that section.
+        #
+        # Indexing it once was not enough, because the things people ask
+        # about by name are named in ordinary words. KuantorFlow's
+        # activities are `Fill the gap`, `Spell it`, `Odd one out`, `Real or
+        # fake` -- and `fill`, `gap`, `spell`, `odd` and `real` are the least
+        # rare words in a document about word games, so TF-IDF gave the name
+        # of a thing almost no weight and the section that *was* the thing
+        # lost to the sections merely mentioning it. Three of ten activity
+        # questions reached no relevant chunk at all.
+        #
+        # **Three is measured, not chosen.** Over ten questions naming the
+        # ten activities and seven whose answers live in a body rather than a
+        # heading: x1 reached 7/10 activities, x2 reached 9/10, x3 reached
+        # 10/10, and x5 and x8 reached nothing further. No body question is
+        # lost at any weight, which is the number that had to hold -- a fix
+        # that found activities by losing everything else would be worse than
+        # the bug.
+        corpus = [(c.heading + "\n") * HEADING_WEIGHT + c.text
+                  for c in self.chunks]
         self._vectorizer = TfidfVectorizer(stop_words="english")
         self._matrix = self._vectorizer.fit_transform(corpus)
 
