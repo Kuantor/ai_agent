@@ -10,8 +10,8 @@ the cache breakpoint. Both are things a later edit can quietly undo without
 any test failing anywhere else.
 """
 
-from agent import (FAST_BRIEF, FAST_EFFORT, MODEL, REFUSAL_REPLY, MykolaAgent,
-                   _model_label, _personalization, _personalized_system,
+from agent import (FAST_BRIEF, FAST_EFFORT, MODEL, RECAP_FAST_BRIEF,
+                   REFUSAL_REPLY, MykolaAgent, _model_label, _personalization, _personalized_system,
                    _stable_system, _system_blocks)
 
 
@@ -53,11 +53,11 @@ class _Messages:
         self._message = message
         self.calls = []
 
-    def create(self, **kwargs):          # recap()
+    def create(self, **kwargs):          # nothing, since kuantorflow#495
         self.calls.append(kwargs)
         return self._message
 
-    def stream(self, **kwargs):          # answer()
+    def stream(self, **kwargs):          # answer() and recap()
         self.calls.append(kwargs)
         return _Stream(self._message)
 
@@ -190,6 +190,39 @@ def main() -> None:
     (call,) = agent.client.messages.calls
     assert "output_config" not in call
     assert all(FAST_BRIEF not in b["text"] for b in call["system"])
+
+    # --- the recap streams, and fast thinking reaches it (kuantorflow#495) ---
+    # The site types the recap out as it arrives, like any answer, so it has
+    # to arrive in pieces; `recap()` is the same request drained into a string.
+    class _Chunked(_Message):
+        def __init__(self, parts):
+            super().__init__("")
+            self.content = [_TextBlock(t) for t in parts]
+    agent = _agent(_Chunked(["Last time ", "we worked on ", "'reluctant'."]))
+    assert list(agent.stream_recap("user: hello")) ==         ["Last time ", "we worked on ", "'reluctant'."], "the deltas, in order"
+    agent = _agent(_Chunked(["Last time ", "we worked on ", "'reluctant'."]))
+    assert agent.recap("user: hello") == "Last time we worked on 'reluctant'."
+
+    agent = _agent(_Message("Never sent."))
+    assert list(agent.stream_recap("   ")) == [] and agent.recap("") == ""
+    assert agent.client.messages.calls == [],         "nothing to recap must not reach the model -- it is paid for"
+
+    # Fast thinking: the recap's own brevity note, in the prompt. Not the
+    # chat's FAST_BRIEF (it is about answering a question), and no `effort`:
+    # the recap has thinking disabled, so there is no deliberation to cut.
+    agent = _agent(_Message("Brief."))
+    agent.recap("user: hello", user_name="Anton", fast=True)
+    (call,) = agent.client.messages.calls
+    prompt = call["messages"][0]["content"]
+    assert prompt.rstrip().endswith(RECAP_FAST_BRIEF),         "the note must come last, so it overrides the lengths above it"
+    assert FAST_BRIEF not in prompt and FAST_BRIEF not in call["system"]
+    assert "output_config" not in call
+    assert call["thinking"] == {"type": "disabled"}
+
+    agent = _agent(_Message("At length."))
+    agent.recap("user: hello")
+    (call,) = agent.client.messages.calls
+    assert RECAP_FAST_BRIEF not in call["messages"][0]["content"],         "off is the default, and it sends no note"
 
     print("test_model_and_caching.py: all checks passed")
 

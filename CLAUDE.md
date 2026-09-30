@@ -35,6 +35,12 @@ KuantorFlow calls `MykolaAgent`:
   — with `away_hours` (#54) the site has just restarted a stale conversation,
   so the recap opens by acknowledging the break; `build_recap_prompt()` and
   `describe_gap()` are module level so the wording is checkable offline.
+  `fast` (#50) appends `RECAP_FAST_BRIEF`, the recap's own brevity note — not
+  the chat's `FAST_BRIEF`, and no `effort`, since a recap has thinking off.
+- `stream_recap(...)` — the same arguments, **yielding the text as it arrives**
+  (kuantorflow#495: the site types the recap out like any answer). `recap()`
+  is a drain of it, the `answer()`/`stream_answer()` shape, so the two cannot
+  drift; nothing to recap yields nothing and makes no call.
 - `__init__(card_saver=…, name_saver=…)` — KuantorFlow **injects the callables
   that touch its database**: `save_flashcard` so Mykola saves through the
   site's one write path (standalone falls back to `FlashcardsDB`), and a writer
