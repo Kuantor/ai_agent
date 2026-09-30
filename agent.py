@@ -725,11 +725,26 @@ def describe_gap(hours) -> str:
     return f"about {count} day" + ("" if count == 1 else "s")
 
 
-def build_recap_prompt(past_conversations: str, away_hours=None) -> str:
+# Fast thinking's half that applies to a recap (#50, kuantorflow#495). The
+# chat's FAST_BRIEF is about answering a question -- "a greeting gets one
+# sentence", "the answer first" -- and a recap is not an answer to anything, so
+# it gets its own note in the same spirit. Only the note: `effort`, the other
+# half of fast thinking, buys a shorter *deliberation*, and a recap runs with
+# thinking disabled, so there is none to shorten.
+RECAP_FAST_BRIEF = (
+    "Keep this recap short: one or two sentences about the most recent "
+    "conversation, then two follow-up suggestions as a short list, and "
+    "nothing else."
+)
+
+
+def build_recap_prompt(past_conversations: str, away_hours=None,
+                       fast=False) -> str:
     """The recap request sent to Claude (module level so it can be checked
     without an API call). With `away_hours` the learner is returning to a
     conversation the site just restarted for them (#54), so Mykola greets the
-    break; without it, this is the plain welcome-back recap (#30)."""
+    break; without it, this is the plain welcome-back recap (#30). `fast`
+    appends RECAP_FAST_BRIEF, which overrides the lengths above it."""
     gap = describe_gap(away_hours) if away_hours is not None else ""
     opening = (
         f"The learner above has been away for {gap} and has just come back, "
@@ -754,6 +769,7 @@ def build_recap_prompt(past_conversations: str, away_hours=None) -> str:
         "things actually present in the logs — never invent. Address the "
         "learner directly, and do not mention the logs themselves or that "
         "conversations are recorded unless asked."
+        + ("\n\n" + RECAP_FAST_BRIEF if fast else "")
     )
 
 
@@ -1058,7 +1074,7 @@ class MykolaAgent:
         return result
 
     def recap(self, past_conversations: str, user_name=None,
-              hidden_languages=None, away_hours=None) -> str:
+              hidden_languages=None, away_hours=None, fast=False) -> str:
         """
         One-shot welcome-back recap for a returning learner (issue #30).
 
@@ -1073,15 +1089,38 @@ class MykolaAgent:
         opens by acknowledging the break instead of greeting them as if the
         thread had never paused. Optional, so a caller running an older
         KuantorFlow keeps working unchanged.
+
+        A thin drain of `stream_recap()` below -- the `answer()` /
+        `stream_answer()` shape, so the one-piece and the streamed recap are
+        one request and cannot drift apart.
+        """
+        return "".join(self.stream_recap(
+            past_conversations, user_name=user_name,
+            hidden_languages=hidden_languages, away_hours=away_hours,
+            fast=fast)).strip()
+
+    def stream_recap(self, past_conversations: str, user_name=None,
+                     hidden_languages=None, away_hours=None, fast=False):
+        """The recap, **yielding its text as it arrives** (kuantorflow#495).
+
+        Plain text deltas, unlike `stream_answer()`'s tagged events: a recap
+        has no sources, no tools and no history to report, so the text is the
+        whole of it. Nothing is yielded when there is nothing to recap or the
+        model refuses before writing anything -- the caller reads an empty
+        recap as no recap, exactly as it read `recap()`'s "".
+
+        `fast` (#50) asks for a shorter recap -- see RECAP_FAST_BRIEF.
         """
         text = (past_conversations or "").strip()
         if not text:
-            return ""
+            return
         # Keep the most recent material when logs exceed the budget.
         text = text[-RECAP_MAX_CONTEXT_CHARS:]
 
-        prompt = build_recap_prompt(text, away_hours)
-        message = self.client.messages.create(
+        prompt = build_recap_prompt(text, away_hours, fast=fast)
+        started = time.monotonic()
+        first_word = None
+        with self.client.messages.stream(
             model=MODEL,
             max_tokens=RECAP_MAX_TOKENS,
             # Opus 5 thinks by default where Opus 4.8 did not, and RECAP_MAX_TOKENS
@@ -1092,14 +1131,18 @@ class MykolaAgent:
             thinking={"type": "disabled"},
             system=_personalized_system(user_name, hidden_languages),
             messages=[{"role": "user", "content": prompt}],
-        )
-        if message.stop_reason == "refusal":
-            # A refused recap is simply no recap — the caller already treats ""
-            # that way, and there is no learner question here to answer instead.
-            return ""
-        return "".join(
-            block.text for block in message.content if block.type == "text"
-        ).strip()
+        ) as stream:
+            # A refusal is an HTTP 200 with stop_reason "refusal" and, as a
+            # rule, no text -- so there is nothing to yield and the recap is
+            # simply empty. Text that did arrive before one is kept, as
+            # `stream_answer()` keeps it: it is already on the learner's screen.
+            for delta in stream.text_stream:
+                if first_word is None:
+                    first_word = time.monotonic() - started
+                yield delta
+            message = stream.get_final_message()
+        _log_usage(message, first_word=first_word,
+                   elapsed=time.monotonic() - started, fast=fast)
 
     def answer(self, question: str, history=None, on_text=None, user_name=None,
                hidden_languages=None, fast=False) -> dict:
