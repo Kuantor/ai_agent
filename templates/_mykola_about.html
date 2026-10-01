@@ -40,7 +40,7 @@
             <h2>Gallery</h2>
             <div class="gallery-grid">
                 <div class="gallery-item">
-                    <img src="{{ mykola_media('mykola_poster.jpg') }}" alt="Mykola" id="galleryImage">
+                    <img src="{{ mykola_media('mykola_poster.webp') }}" alt="Mykola" id="galleryImage">
                     <p class="gallery-caption">Mykola: A true gentleman of intellect and art</p>
                 </div>
             </div>
@@ -95,7 +95,7 @@
         var lightboxClose = document.querySelector('.lightbox-close');
 
         galleryImage.addEventListener('click', function () {
-            lightboxContent.src = "{{ mykola_media('mykola_poster.jpg') }}";
+            lightboxContent.src = "{{ mykola_media('mykola_poster.webp') }}";
             lightbox.style.display = 'flex';
         });
         lightboxClose.addEventListener('click', function () {
