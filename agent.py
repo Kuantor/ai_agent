@@ -36,6 +36,12 @@ MODEL = "claude-opus-5"
 MAX_TOKENS = 8192
 TOP_K = 3
 MAX_TOOL_ROUNDS = 5  # safety cap on tool-use iterations within one answer
+# The longest single question the standalone app accepts, in characters
+# (kuantorflow#564). Its MAX_CONTENT_LENGTH bounds the question and the
+# history together, so one pasted message of close to a megabyte went to the
+# model as one message. KuantorFlow has its own, environment-tunable copy
+# (web.MAX_CHAT_MESSAGE_CHARS) at the same value.
+MAX_QUESTION_CHARS = 2000
 RECAP_MAX_CONTEXT_CHARS = 12000  # most recent past-log text fed into a recap
 RECAP_MAX_TOKENS = 1024
 MYKOLA_SYMBOLIC_BIRTHDATE = datetime.date(1981, 12, 13)

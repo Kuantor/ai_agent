@@ -16,7 +16,7 @@ from uuid import uuid4
 import anthropic
 from flask import Flask, jsonify, render_template, request, url_for
 
-from agent import MykolaAgent, api_error_response
+from agent import MAX_QUESTION_CHARS, MykolaAgent, api_error_response
 from word_list import WordListGenerator
 from cards_db import FlashcardsDB, format_card_list_for_chat
 
@@ -132,7 +132,8 @@ def _chat_card_response(question: str) -> str | None:
 @app.route("/")
 def home():
     """Render the main chat page."""
-    return render_template("index.html", kb_chunks_count=agent.chunk_count)
+    return render_template("index.html", kb_chunks_count=agent.chunk_count,
+                           max_question_chars=MAX_QUESTION_CHARS)
 
 
 @app.route("/about")
@@ -150,6 +151,10 @@ def chat():
     chat_id = _safe_chat_id(data.get("chat_id"))
     if not question:
         return jsonify({"error": "Empty question"}), 400
+    # Before the agent is asked anything (kuantorflow#564).
+    if len(question) > MAX_QUESTION_CHARS:
+        return jsonify({"error": "Please keep a message to Mykola under "
+                                 f"{MAX_QUESTION_CHARS:,} characters."}), 400
 
     try:
         card_response = _chat_card_response(question)
