@@ -20,6 +20,7 @@ import datetime
 import email.utils as eut
 import json
 import logging
+import re
 import sys
 import time
 from pathlib import Path
@@ -662,7 +663,31 @@ def _log_usage(message, first_word=None, elapsed=None, fast=False) -> None:
         pass
 
 
-def _cache_conversation(convo: list) -> list:
+def _mark_for_cache(message: dict):
+    """A copy of `message` with a cache breakpoint on its last block, or None
+    when it cannot take one (see `_cache_conversation`)."""
+    message = dict(message)
+    content = message.get("content")
+    if isinstance(content, str):
+        blocks = [{"type": "text", "text": content}]
+    elif isinstance(content, list):
+        blocks = [dict(b) if isinstance(b, dict) else b for b in content]
+    else:
+        return None                     # nothing sensible to mark
+
+    # A block the SDK returned (a ToolUseBlock, say) is not a dict and cannot
+    # take the marker; leaving the turn unmarked costs a cache read, which is
+    # a great deal better than a 400 on a malformed block.
+    if not blocks or not isinstance(blocks[-1], dict):
+        return None
+
+    blocks[-1] = dict(blocks[-1])
+    blocks[-1]["cache_control"] = {"type": "ephemeral"}
+    message["content"] = blocks
+    return message
+
+
+def _cache_conversation(convo: list, history_len: int | None = None) -> list:
     """Mark the end of the conversation as a cache breakpoint (#71).
 
     #64 cached the system prompt and tools — the part that never changes. This
@@ -676,35 +701,59 @@ def _cache_conversation(convo: list) -> list:
     A copy: the caller's `history` belongs to the widget and goes back to the
     browser, and `cache_control` has no business travelling with it.
 
-    Marking the **last** message means each request reads everything before it
-    from cache — the breakpoint moves forward as the conversation grows, and
-    each turn's read covers every turn before it.
+    Marking the **last** message means the tool rounds inside one answer read
+    everything before them from cache.
+
+    **`history_len` adds a second breakpoint, at the end of the stored
+    history** (#88), and that is the one that carries a conversation from turn
+    to turn. Since #88 the turn being answered carries its retrieved excerpts
+    (`<context>`) and the history keeps the bare question, so the newest user
+    message is sent in one form now and another on every later turn. A cache
+    entry ending on it can never be read again; one ending on the message just
+    before it can, because the history is byte-identical from one turn to the
+    next. So each turn reads the whole earlier conversation from cache and
+    writes one more exchange onto it. With #64's system breakpoint that is
+    three of the API's four.
     """
     if not convo:
         return convo
 
     convo = list(convo)
-    last = dict(convo[-1])
-    content = last.get("content")
-
-    if isinstance(content, str):
-        blocks = [{"type": "text", "text": content}]
-    elif isinstance(content, list):
-        blocks = [dict(b) if isinstance(b, dict) else b for b in content]
-    else:
-        return convo                    # nothing sensible to mark
-
-    # A block the SDK returned (a ToolUseBlock, say) is not a dict and cannot
-    # take the marker; leaving the turn unmarked costs a cache read, which is
-    # a great deal better than a 400 on a malformed block.
-    if not blocks or not isinstance(blocks[-1], dict):
-        return convo
-
-    blocks[-1] = dict(blocks[-1])
-    blocks[-1]["cache_control"] = {"type": "ephemeral"}
-    last["content"] = blocks
-    convo[-1] = last
+    marked = _mark_for_cache(convo[-1])
+    if marked is not None:
+        convo[-1] = marked
+    if history_len and 0 < history_len < len(convo):
+        marked = _mark_for_cache(convo[history_len - 1])
+        if marked is not None:
+            convo[history_len - 1] = marked
     return convo
+
+
+# How build_user_message() wraps a question. Turns stored before #88 still
+# carry it inside the widget's history; `_bare_question()` takes it off.
+_CONTEXT_PREFIX = re.compile(r"\A<context>\n.*?\n</context>\n\n", re.DOTALL)
+
+
+def _bare_question(content):
+    """A user turn without the excerpts retrieved for it (#88)."""
+    if isinstance(content, str):
+        return _CONTEXT_PREFIX.sub("", content, count=1)
+    return content
+
+
+def _without_old_context(history: list) -> list:
+    """The history with every user turn back to the words the learner typed.
+
+    Until #88 each stored question carried the guide excerpts retrieved for it,
+    and the widget sent them all back on every message: after ten questions,
+    up to thirty sections about questions already answered, competing with the
+    current one for "the context" the prompt tells the model to prefer.
+    Conversations saved in browsers before the change shrink on their next
+    message instead of keeping their excerpts for good.
+    """
+    return [dict(m, content=_bare_question(m.get("content")))
+            if isinstance(m, dict) and m.get("role") == "user" else m
+            for m in history]
 
 
 def describe_gap(hours) -> str:
@@ -1201,7 +1250,7 @@ class MykolaAgent:
         to the caller (use `api_error_response` to format them for Flask).
         """
         question = (question or "").strip()
-        history = list(history or [])
+        history = _without_old_context(list(history or []))
 
         chunks = self.kb.retrieve(question, top_k=TOP_K)
         user_message = build_user_message(question, chunks)
@@ -1230,7 +1279,7 @@ class MykolaAgent:
                 # ...and the conversation itself (#71). Without this the
                 # history is the one part of the request that grows and the
                 # one part still billed at full price on every turn.
-                messages=_cache_conversation(convo),
+                messages=_cache_conversation(convo, history_len=len(history)),
             ) as stream:
                 for text in stream.text_stream:
                     if first_word is None:
@@ -1266,7 +1315,10 @@ class MykolaAgent:
                     })
             convo.append({"role": "user", "content": results})
 
-        history.append({"role": "user", "content": user_message})
+        # The bare question, never `user_message` (#88): the excerpts were
+        # retrieved for this turn and are sent with this turn only. Stored,
+        # they went back with every later message.
+        history.append({"role": "user", "content": question})
         history.append({"role": "assistant", "content": response_text})
         sources = [
             {"file": c.source, "heading": c.heading, "score": round(c.score, 2)}

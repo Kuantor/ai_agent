@@ -102,6 +102,17 @@ not for a one-shot recap. **Anything you add before the breakpoint must render
 identically across a conversation** — check `usage.cache_read_input_tokens` is
 non-zero on the second message if you touch it.
 
+**The returned `history` holds each question as the learner typed it** (#88).
+The guide excerpts retrieved for a question (`build_user_message()`'s
+`<context>` block) are sent with that turn only; stored, they went back with
+every later message. `_without_old_context()` strips them from histories saved
+before the change. That makes the newest user message differ between the turn
+it is answered on and every later one, so the conversation cache (#71) marks
+**the end of the stored history** as well as the end of the request
+(`_cache_conversation(convo, history_len=)`): the history is byte-identical
+from turn to turn, so each turn reads the whole earlier conversation from cache.
+Three breakpoints with the system prompt's, of the API's four.
+
 ## Run & test
 
 ```bash
@@ -110,6 +121,7 @@ python test_agent_prompt.py     # persona / prompt / knowledge-base checks
 python test_preferred_name.py   # the set_preferred_name tool (#62)
 python test_model_and_caching.py  # thinking mode, cache breakpoint, refusals
 python test_rag.py
+python test_context_out_of_history.py  # #88: excerpts sent once, cache still hits
 ```
 
 Tests are plain scripts (not pytest) that assert `SYSTEM_PROMPT` content and
