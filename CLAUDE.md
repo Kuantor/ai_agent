@@ -122,6 +122,7 @@ python test_preferred_name.py   # the set_preferred_name tool (#62)
 python test_model_and_caching.py  # thinking mode, cache breakpoint, refusals
 python test_rag.py
 python test_context_out_of_history.py  # #88: excerpts sent once, cache still hits
+python test_question_cap.py             # kuantorflow#564: one question is capped
 ```
 
 Tests are plain scripts (not pytest) that assert `SYSTEM_PROMPT` content and
