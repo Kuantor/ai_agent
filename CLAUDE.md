@@ -83,6 +83,14 @@ symbolic birthday drives his "age" answers.
 - **A refusal is an HTTP 200**, `stop_reason == "refusal"` with no text. Both
   call sites check for it: `answer()` substitutes `REFUSAL_REPLY` so the
   learner is not left with a blank message, `recap()` returns `""`.
+- **An answer is never empty when the tool rounds run out** (#90). The last
+  of `MAX_TOOL_ROUNDS` carries `tool_choice` none and `FINAL_ROUND_NOTE` beside
+  its tool results, so the model answers from what it has and says what it
+  could not get to; without the note, measured live, it promised a tool call
+  it could no longer make. Behind that, an answer still empty becomes
+  `EMPTY_REPLY`. Both log to mykola.log: `TOOL-ROUNDS-EXHAUSTED` (on
+  `mykola.tools`) says how often 5 rounds is not enough, `EMPTY-REPLY` (on
+  `mykola.usage`) that the guard fired.
 - **He is told which Claude he is.** `_model_guidance()` renders `MODEL`
   through `_model_label()` (`claude-opus-5` → "Claude Opus 5") into the prompt,
   so changing the constant changes what he answers — he can never name a model
@@ -123,6 +131,7 @@ python test_model_and_caching.py  # thinking mode, cache breakpoint, refusals
 python test_rag.py
 python test_context_out_of_history.py  # #88: excerpts sent once, cache still hits
 python test_question_cap.py             # kuantorflow#564: one question is capped
+python test_tool_rounds.py              # #90: the last tool round answers, never empty
 ```
 
 Tests are plain scripts (not pytest) that assert `SYSTEM_PROMPT` content and

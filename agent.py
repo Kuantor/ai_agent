@@ -54,6 +54,24 @@ REFUSAL_REPLY = (
     "Shall we return to your English?"
 )
 
+# What Mykola says when an answer would otherwise be empty (#90). The last
+# tool round is asked to answer in text, so this should not be reached; it is
+# the guard behind that, because an empty bubble reads as a broken chat and
+# the empty turn would be kept in the history.
+EMPTY_REPLY = (
+    "Forgive me, I went looking through your cards and lost my thread before "
+    "I could answer. Could you ask me again, perhaps one topic at a time?"
+)
+
+# Said to the model on the last tool round, beside that round's tool results
+# (#90). `tool_choice` none stops it calling a tool, but not from *promising*
+# one -- measured live, a forced answer ended "Let me gather the words." with
+# nothing after it. Told that the tools are done, it answers with what it has.
+FINAL_ROUND_NOTE = (
+    "No more tool calls are available for this answer. Reply now using what "
+    "you already have, and say briefly what you could not get to."
+)
+
 
 def _model_label(model: str = MODEL) -> str:
     """A model id as a person would say it: claude-opus-5 -> "Claude Opus 5".
@@ -669,6 +687,29 @@ def _log_usage(message, first_word=None, elapsed=None, fast=False) -> None:
         pass
 
 
+def _log_rounds_exhausted(rounds: int) -> None:
+    """The cap was reached: the model wanted a tool on every round so far, and
+    the last one is being asked to answer instead (#90). On the tools logger,
+    because it is about tool use and that logger already reaches mykola.log.
+    How often this happens is what says whether MAX_TOOL_ROUNDS is right.
+
+    Never raises."""
+    try:
+        _tool_log.info("TOOL-ROUNDS-EXHAUSTED rounds=%s", rounds)
+    except Exception:
+        pass
+
+
+def _log_empty_reply(stop_reason) -> None:
+    """An answer ended with no text and EMPTY_REPLY was said instead (#90).
+
+    Never raises."""
+    try:
+        _usage_log.info("EMPTY-REPLY stop=%s", stop_reason)
+    except Exception:
+        pass
+
+
 def _mark_for_cache(message: dict):
     """A copy of `message` with a cache breakpoint on its last block, or None
     when it cannot take one (see `_cache_conversation`)."""
@@ -1269,8 +1310,24 @@ class MykolaAgent:
 
         started = time.monotonic()
         first_word = None
-        for _ in range(MAX_TOOL_ROUNDS):
+        for round_no in range(1, MAX_TOOL_ROUNDS + 1):
             extra = {"output_config": {"effort": FAST_EFFORT}} if fast else {}
+            if round_no == MAX_TOOL_ROUNDS:
+                # #90. The last permitted round, reached only because every
+                # round before it ended asking for a tool. Left as it was, a
+                # model that wanted one more got nothing: the loop ended, the
+                # tools never ran, and the learner saw an empty reply. Now it
+                # must answer in text, from the tool results already in
+                # `convo`, so it can say what it found and what it did not
+                # get to. Only this round carries it, so the earlier rounds
+                # stay free to use tools. Measured live, the cached
+                # conversation is still read on this call.
+                extra["tool_choice"] = {"type": "none"}
+                _log_rounds_exhausted(MAX_TOOL_ROUNDS)
+                last = convo[-1]
+                if isinstance(last.get("content"), list):
+                    convo[-1] = {**last, "content": last["content"] + [
+                        {"type": "text", "text": FINAL_ROUND_NOTE}]}
             with self.client.messages.stream(
                 model=MODEL,
                 max_tokens=MAX_TOKENS,
@@ -1320,6 +1377,15 @@ class MykolaAgent:
                         "content": result_json,
                     })
             convo.append({"role": "user", "content": results})
+
+        # #90's guard. The last round answers in text, so this should not
+        # happen -- but an empty bubble reads as a broken chat, and an empty
+        # turn kept in the history is worse, so whatever the cause, Mykola
+        # says something and the line says how often.
+        if not response_text.strip():
+            _log_empty_reply(message.stop_reason)
+            response_text = EMPTY_REPLY
+            yield "text", EMPTY_REPLY
 
         # The bare question, never `user_message` (#88): the excerpts were
         # retrieved for this turn and are sent with this turn only. Stored,
