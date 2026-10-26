@@ -177,49 +177,121 @@ class FlashcardsDB:
                 return lookup[cand.lower()]
         return None
 
-    def _normalize_row(self, data: Dict[str, Any], columns: List[str]) -> Dict:
-        """Map arbitrary flashcards schema to app-normalized card dict."""
+    # Where a card's topic lives (#67), in order. kuantorflow#207 gave topics a
+    # table of their own: `flashcards.topic_id` -> `topics.name`. A simplified
+    # schema keeps it in a column. **The part of speech is never a topic**:
+    # `pos` and `part_of_speech` used to be the last candidates here, so once
+    # kuantorflow drops its `topic` string (#210) every card would have been
+    # reported under "noun" or "verb", with nothing to say anything was wrong.
+    CATEGORY_COLUMNS = ["category", "topic", "tag"]
+    TOPICS_TABLE = "topics"
+    TOPIC_NAME = "_topic_name"  # the joined topics.name, under a name no schema uses
+
+    def _topic_plan(self, columns: List[str], has_topics_table: bool):
+        """`("join", None)`, `("column", name)` or `("none", None)`."""
+        if has_topics_table and self._pick_column(columns, ["topic_id"]):
+            return "join", None
+        column = self._pick_column(columns, self.CATEGORY_COLUMNS)
+        return ("column", column) if column else ("none", None)
+
+    def _normalize_row(self, data: Dict[str, Any], columns: List[str], plan=None) -> Dict:
+        """Map arbitrary flashcards schema to app-normalized card dict.
+
+        A card with no topic has category "" (#67): a real state in kuantorflow,
+        where `topic_id` may be NULL, and not the same thing as a topic called
+        "general". A table with no topic at all still says "general".
+        """
         word_col = self._pick_column(columns, ["word", "term", "english", "front", "english_word", "word_en"])
         translation_col = self._pick_column(
             columns,
             ["translation", "meaning", "back", "native", "ukrainian", "russian", "translation_uk", "translation_ru"],
         )
         explanation_col = self._pick_column(columns, ["explanation", "example", "description", "note", "notes"])
-        category_col = self._pick_column(columns, ["category", "topic", "tag", "part_of_speech", "pos"])
         id_col = self._pick_column(columns, ["id", "card_id"])
+        kind, category_col = plan or self._topic_plan(columns, False)
+        if kind == "join":
+            category = str(data.get(self.TOPIC_NAME) or "").strip()
+        elif kind == "column":
+            category = str(data.get(category_col) or "").strip()
+        else:
+            category = "general"
 
         return {
             "id": data.get(id_col) if id_col else None,
             "word": str(data.get(word_col, "")).strip() if word_col else "",
             "translation": str(data.get(translation_col, "")).strip() if translation_col else "",
             "explanation": str(data.get(explanation_col, "")).strip() if explanation_col else "",
-            "category": str(data.get(category_col, "general")).strip() if category_col else "general",
+            "category": category,
         }
+
+    def _cards_sql(self, plan, quote, where: str = "") -> str:
+        """The SELECT for cards: joined to topics when the plan says so."""
+        table = quote(self.table_name)
+        if plan[0] == "join":
+            query = (f"SELECT f.*, t.name AS {self.TOPIC_NAME} FROM {table} f "
+                     f"LEFT JOIN {quote(self.TOPICS_TABLE)} t ON f.topic_id = t.id")
+        else:
+            query = f"SELECT * FROM {table} f"
+        return query + (f" WHERE {where}" if where else "")
+
+    def _category_filter(self, plan, quote, placeholder: str) -> Optional[str]:
+        """The WHERE clause matching one topic name, or None when a table has none."""
+        if plan[0] == "join":
+            return f"LOWER(t.name) = LOWER({placeholder})"
+        if plan[0] == "column":
+            return f"LOWER(f.{quote(plan[1])}) = LOWER({placeholder})"
+        return None
+
+    def _mysql_plan(self, columns: List[str]):
+        return self._topic_plan(columns, self._mysql_has_table(self.TOPICS_TABLE))
+
+    def _sqlite_plan(self, columns: List[str]):
+        return self._topic_plan(columns, self._sqlite_has_table(self.TOPICS_TABLE))
 
     def _query_mysql_cards(self, where: str = "", params: tuple = ()) -> List[Dict]:
         """Run a cards query against MySQL and normalize rows."""
         columns = self._mysql_columns()
-        query = f"SELECT * FROM `{self.table_name}`"
-        if where:
-            query += f" WHERE {where}"
+        plan = self._mysql_plan(columns)
+        query = self._cards_sql(plan, lambda n: f"`{n}`", where)
         with self._mysql_connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(query, params)
                 rows = cur.fetchall()
-        cards = [self._normalize_row(r, columns) for r in rows]
+        cards = [self._normalize_row(r, columns, plan) for r in rows]
         return [c for c in cards if c.get("word")]
 
     def _query_sqlite_cards(self, where: str = "", params: tuple = ()) -> List[Dict]:
         """Run a cards query against sqlite and normalize rows."""
         columns = self._sqlite_columns()
-        query = f"SELECT * FROM {self.table_name}"
-        if where:
-            query += f" WHERE {where}"
+        plan = self._sqlite_plan(columns)
+        query = self._cards_sql(plan, lambda n: n, where)
         with sqlite3.connect(self.sqlite_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(query, params).fetchall()
-        cards = [self._normalize_row(dict(r), columns) for r in rows]
+        cards = [self._normalize_row(dict(r), columns, plan) for r in rows]
         return [c for c in cards if c.get("word")]
+
+    def _topic_id_for(self, name: str) -> Optional[int]:
+        """The id of an existing shared topic with this name, or None (#67).
+
+        Read-only on purpose: standalone mode never creates a topics row. The
+        host owns its keys -- kuantorflow resolves and creates topics in its own
+        `_get_or_create_topic()` -- and a row made here would bypass its
+        section, creator and namespace rules. Namespace 0 is the shared one.
+        """
+        if not name:
+            return None
+        if self.mysql_config:
+            with self._mysql_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(f"SELECT id FROM `{self.TOPICS_TABLE}` "
+                                "WHERE name = %s AND namespace = 0 LIMIT 1", (name,))
+                    row = cur.fetchone()
+            return row["id"] if row else None
+        with sqlite3.connect(self.sqlite_path) as conn:
+            row = conn.execute(f"SELECT id FROM {self.TOPICS_TABLE} "
+                               "WHERE name = ? AND namespace = 0 LIMIT 1", (name,)).fetchone()
+        return row[0] if row else None
 
     def load_or_create(self):
         """Load database from file or create with sample data if it doesn't exist."""
@@ -256,6 +328,13 @@ class FlashcardsDB:
         Only columns that actually exist in the target table are written, so
         this works against the real kuantorflow schema as well as simplified
         ones. Returns the saved card dict (with id where the backend has one).
+
+        **The topic, against kuantorflow's schema (#67):** the name is resolved
+        to an existing shared topic's id and written to `topic_id`, alongside
+        the `topic` string while that column exists. **A name with no topic
+        row leaves the card without a topic**: this never creates a topics
+        row, because the host owns its keys (see `_topic_id_for()`). Embedded
+        kuantorflow never reaches this method; its own saver files topics.
         """
         word = str(entry.get("word") or "").strip()
         if not word:
@@ -269,6 +348,11 @@ class FlashcardsDB:
                 value = entry.get(field)
                 if value and field.lower() in lookup:
                     data[lookup[field.lower()]] = str(value)
+            plan = self._mysql_plan(columns) if self.mysql_config else self._sqlite_plan(columns)
+            if plan[0] == "join":
+                topic_id = self._topic_id_for(str(entry.get("topic") or "").strip())
+                if topic_id is not None:
+                    data[lookup["topic_id"]] = topic_id
             if not data:
                 raise RuntimeError(
                     f"Table '{self.table_name}' has none of the flashcard columns."
@@ -340,23 +424,21 @@ class FlashcardsDB:
         return self.cards
 
     def get_cards_by_category(self, category: str) -> List[Dict]:
-        """Get flashcards by category."""
-        if self.mysql_config:
-            # Try direct category match first; if schema has no category, fallback to client-side filter.
-            try:
-                return self._query_mysql_cards("LOWER(category)=LOWER(%s)", (category,))
-            except Exception:
-                pass
-            cards = self._query_mysql_cards()
-            return [c for c in cards if c.get("category", "").lower() == category.lower()]
-        if self.sqlite_path:
-            # Try direct category match first; if schema has no category, fallback to client-side filter.
-            try:
-                return self._query_sqlite_cards("LOWER(category)=LOWER(?)", (category,))
-            except sqlite3.Error:
-                pass
-            cards = self._query_sqlite_cards()
-            return [c for c in cards if c.get("category", "").lower() == category.lower()]
+        """Get flashcards by category: one query, filtered in SQL (#67).
+
+        It used to try a `category` column, catch the error kuantorflow's
+        schema always raised, and then fetch every card to filter in Python.
+        A table with no topic at all files everything under "general".
+        """
+        if self.mysql_config or self.sqlite_path:
+            columns = self._mysql_columns() if self.mysql_config else self._sqlite_columns()
+            plan = self._mysql_plan(columns) if self.mysql_config else self._sqlite_plan(columns)
+            query = self._query_mysql_cards if self.mysql_config else self._query_sqlite_cards
+            quote = (lambda n: f"`{n}`") if self.mysql_config else (lambda n: n)
+            where = self._category_filter(plan, quote, "%s" if self.mysql_config else "?")
+            if where is None:
+                return query() if category.strip().lower() == "general" else []
+            return query(where, (category,))
         return [c for c in self.cards if c.get("category", "").lower() == category.lower()]
 
     def search_cards(self, query: str) -> List[Dict]:
@@ -386,7 +468,36 @@ class FlashcardsDB:
         return len(self.cards)
 
     def get_categories(self) -> List[str]:
-        """Get list of all categories."""
+        """The topics that have cards, as a query (#67).
+
+        **Only topics with cards**, matching kuantorflow's own `get_topics()`:
+        a topic row outlives its last card there, on purpose, and Mykola should
+        not offer to quiz somebody on a topic with nothing in it. A card with
+        no topic adds no category.
+        """
+        if self.mysql_config or self.sqlite_path:
+            columns = self._mysql_columns() if self.mysql_config else self._sqlite_columns()
+            plan = self._mysql_plan(columns) if self.mysql_config else self._sqlite_plan(columns)
+            quote = (lambda n: f"`{n}`") if self.mysql_config else (lambda n: n)
+            table = quote(self.table_name)
+            if plan[0] == "join":
+                sql = (f"SELECT DISTINCT t.name FROM {quote(self.TOPICS_TABLE)} t "
+                       f"JOIN {table} f ON f.topic_id = t.id")
+            elif plan[0] == "column":
+                column = quote(plan[1])
+                sql = (f"SELECT DISTINCT {column} FROM {table} "
+                       f"WHERE {column} IS NOT NULL AND {column} <> ''")
+            else:
+                return ["general"] if self.get_cards_count() else []
+            if self.mysql_config:
+                with self._mysql_connect() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(sql)
+                        names = [next(iter(r.values())) for r in cur.fetchall()]
+            else:
+                with sqlite3.connect(self.sqlite_path) as conn:
+                    names = [r[0] for r in conn.execute(sql).fetchall()]
+            return sorted(str(n).strip() for n in names if str(n or "").strip())
         cards = self.get_all_cards()
         categories = set(c.get("category", "general") for c in cards)
         return sorted(list(categories))
