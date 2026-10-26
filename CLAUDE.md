@@ -24,6 +24,13 @@ Leontovych. This repo is used two ways:
   French connections, music), so its signature moves are retrieved and cited,
   not improvised.
 - **`flask_app.py`** — the standalone web chat.
+- **`cards_db.py`** — `FlashcardsDB`, the **standalone** card store (MySQL,
+  sqlite or a JSON demo). Embedded KuantorFlow never uses it: it injects
+  `card_saver`, `topic_reader` and `card_reader` instead. Pointed at
+  KuantorFlow's database, a card's topic is `topics.name` through
+  `flashcards.topic_id` (#67), then a plain `category`/`topic`/`tag` column,
+  then "general" — **never `pos`**. A standalone save resolves a topic name to
+  an existing shared topic and never creates a topics row.
 
 ## The importable contract (keep it stable)
 
@@ -132,6 +139,7 @@ python test_rag.py
 python test_context_out_of_history.py  # #88: excerpts sent once, cache still hits
 python test_question_cap.py             # kuantorflow#564: one question is capped
 python test_tool_rounds.py              # #90: the last tool round answers, never empty
+python test_cards_db_topics.py          # #67: standalone reads topics through topic_id, never pos
 ```
 
 Tests are plain scripts (not pytest) that assert `SYSTEM_PROMPT` content and
